@@ -1,9 +1,11 @@
 #include "system_service/app_manager.h"
 #include "system_service/service_manager.h"
 #include "system_service/event_bus.h"
+#include "system_service/app_storage.h"
 #include "app_internal.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_partition.h"
 #include <string.h>
 
 static const char *TAG = "app_manager";
@@ -489,8 +491,221 @@ esp_err_t app_manager_get_running_apps(app_info_t *apps, size_t max_count, size_
 // Placeholder for future implementation
 esp_err_t app_manager_load_from_storage(const char *path, app_info_t **out_info)
 {
-    ESP_LOGI(TAG, "Load from storage: %s (not yet implemented)", path);
-    return ESP_ERR_NOT_SUPPORTED;
+    if (path == NULL || out_info == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    ESP_LOGI(TAG, "Loading app from storage: %s", path);
+    
+    // Extract app name from path (e.g., "/storage/apps/goodbye.bin" -> "goodbye")
+    const char *filename = strrchr(path, '/');
+    if (filename == NULL) {
+        filename = path;
+    } else {
+        filename++; // Skip the '/'
+    }
+    
+    // Remove .bin extension if present
+    char app_name[64];
+    strncpy(app_name, filename, sizeof(app_name) - 1);
+    app_name[sizeof(app_name) - 1] = '\0';
+    
+    char *dot = strrchr(app_name, '.');
+    if (dot != NULL && strcmp(dot, ".bin") == 0) {
+        *dot = '\0';
+    }
+    
+    // Read the app binary from storage
+    void *app_data = NULL;
+    size_t app_size = 0;
+    
+    // Load from file system using app_storage (expects app name, not full path)
+    esp_err_t ret = app_storage_load(app_name, &app_data, &app_size);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to load app '%s' from storage: %s", app_name, esp_err_to_name(ret));
+        return ret;
+    }
+    
+    ESP_LOGI(TAG, "✓ Read %zu bytes from storage", app_size);
+    
+    // Get registry and lock
+    app_registry_t *registry = app_get_registry();
+    ret = app_registry_lock();
+    if (ret != ESP_OK) {
+        free(app_data);
+        return ret;
+    }
+    
+    // Find a free slot
+    int slot = -1;
+    for (int i = 0; i < APP_REGISTRY_MAX_ENTRIES; i++) {
+        if (!registry->entries[i].registered) {
+            slot = i;
+            break;
+        }
+    }
+    
+    if (slot == -1) {
+        app_registry_unlock();
+        free(app_data);
+        ESP_LOGE(TAG, "Maximum number of apps reached");
+        return ESP_ERR_NO_MEM;
+    }
+    
+    // Load the binary into app_info
+    app_info_t *info = &registry->entries[slot].info;
+    ret = app_load_binary(app_data, app_size, info);
+    free(app_data);  // Free the temporary buffer
+    
+    if (ret != ESP_OK) {
+        app_registry_unlock();
+        return ret;
+    }
+    
+    // Set source type and mark as dynamic
+    info->source = APP_SOURCE_STORAGE;
+    info->is_dynamic = true;
+    
+    // Mark as registered
+    registry->entries[slot].registered = true;
+    registry->count++;
+    
+    app_registry_unlock();
+    
+    *out_info = info;
+    
+    ESP_LOGI(TAG, "✓ Successfully loaded app '%s' from storage", info->manifest.name);
+    
+    return ESP_OK;
+}
+
+esp_err_t app_manager_load_from_partition(const char *partition_label, size_t offset, app_info_t **out_info)
+{
+    if (partition_label == NULL || out_info == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    ESP_LOGI(TAG, "Loading app from partition '%s' at offset 0x%zx", partition_label, offset);
+    
+    // Find the partition
+    const esp_partition_t *partition = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA,
+        ESP_PARTITION_SUBTYPE_DATA_FAT,
+        partition_label
+    );
+    
+    if (partition == NULL) {
+        ESP_LOGE(TAG, "Partition '%s' not found", partition_label);
+        return ESP_ERR_NOT_FOUND;
+    }
+    
+    ESP_LOGI(TAG, "Found partition '%s' at 0x%lx, size=%lu", 
+             partition_label, partition->address, partition->size);
+    
+    // Check if offset is valid
+    if (offset >= partition->size) {
+        ESP_LOGE(TAG, "Offset 0x%zx is beyond partition size %lu", offset, partition->size);
+        return ESP_ERR_INVALID_SIZE;
+    }
+    
+    ESP_LOGI(TAG, "Reading from partition offset 0x%zx (absolute: 0x%lx)", 
+             offset, partition->address + offset);
+    
+    // Read app header first to get size
+    uint8_t header_buf[128];
+    memset(header_buf, 0, sizeof(header_buf));
+    esp_err_t ret = esp_partition_read(partition, offset, header_buf, sizeof(header_buf));
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read header: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    // Debug: print first 16 bytes
+    ESP_LOGI(TAG, "First 16 bytes: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x",
+             header_buf[0], header_buf[1], header_buf[2], header_buf[3],
+             header_buf[4], header_buf[5], header_buf[6], header_buf[7],
+             header_buf[8], header_buf[9], header_buf[10], header_buf[11],
+             header_buf[12], header_buf[13], header_buf[14], header_buf[15]);
+    
+    // Check magic (0x4150504B = "APPK")
+    uint32_t magic = *(uint32_t*)&header_buf[0];
+    if (magic != 0x4150504B) {
+        ESP_LOGE(TAG, "Invalid magic: 0x%08lX (expected 0x4150504B)", magic);
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    // Get app size from header
+    uint32_t app_size = *(uint32_t*)&header_buf[84];
+    size_t total_size = 128 + app_size;
+    
+    ESP_LOGI(TAG, "App size: %lu bytes (total with header: %zu)", app_size, total_size);
+    
+    // Allocate memory for entire app
+    void *app_data = malloc(total_size);
+    if (app_data == NULL) {
+        ESP_LOGE(TAG, "Failed to allocate %zu bytes", total_size);
+        return ESP_ERR_NO_MEM;
+    }
+    
+    // Read the entire app
+    ret = esp_partition_read(partition, offset, app_data, total_size);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read app: %s", esp_err_to_name(ret));
+        free(app_data);
+        return ret;
+    }
+    
+    ESP_LOGI(TAG, "✓ Loaded %zu bytes from partition", total_size);
+    
+    // Get registry and lock
+    app_registry_t *registry = app_get_registry();
+    ret = app_registry_lock();
+    if (ret != ESP_OK) {
+        free(app_data);
+        return ret;
+    }
+    
+    // Find a free slot
+    int slot = -1;
+    for (int i = 0; i < APP_REGISTRY_MAX_ENTRIES; i++) {
+        if (!registry->entries[i].registered) {
+            slot = i;
+            break;
+        }
+    }
+    
+    if (slot == -1) {
+        app_registry_unlock();
+        free(app_data);
+        ESP_LOGE(TAG, "Maximum number of apps reached");
+        return ESP_ERR_NO_MEM;
+    }
+    
+    // Load the binary into app_info
+    app_info_t *info = &registry->entries[slot].info;
+    ret = app_load_binary(app_data, total_size, info);
+    free(app_data);  // Free the temporary buffer
+    
+    if (ret != ESP_OK) {
+        app_registry_unlock();
+        return ret;
+    }
+    
+    // Set source type and mark as dynamic
+    info->source = APP_SOURCE_STORAGE;
+    info->is_dynamic = true;
+    
+    // Mark as registered
+    registry->entries[slot].registered = true;
+    registry->count++;
+    
+    app_registry_unlock();
+    
+    *out_info = info;
+    
+    ESP_LOGI(TAG, "✓ Successfully loaded app '%s' from partition", info->manifest.name);
+    
+    return ESP_OK;
 }
 
 esp_err_t app_manager_load_from_url(const char *url, app_info_t **out_info)

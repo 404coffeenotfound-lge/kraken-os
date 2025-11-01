@@ -94,6 +94,8 @@ esp_err_t app_manager_register_app(const app_manifest_t *manifest, app_info_t **
 
 esp_err_t app_manager_load_from_storage(const char *path, app_info_t **out_info);
 
+esp_err_t app_manager_load_from_partition(const char *partition_label, size_t offset, app_info_t **out_info);
+
 esp_err_t app_manager_load_from_url(const char *url, app_info_t **out_info);
 
 esp_err_t app_manager_install(const void *app_data, size_t size, 

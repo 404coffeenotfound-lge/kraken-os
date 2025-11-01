@@ -29,7 +29,8 @@
 // App manager and example apps
 #include "system_service/app_manager.h"
 #include "hello_app.h"
-#include "goodbye_app.h"
+// goodbye_app will be loaded dynamically from partition
+// #include "goodbye_app.h"
 
 // Application tag for logging
 static const char *TAG = "kraken";
@@ -122,6 +123,26 @@ static void init_application_services(void)
     ESP_LOGI(TAG, "Initializing application services...");
     ESP_LOGI(TAG, "");
     
+    // Initialize App Storage
+    // DISABLED: We're loading apps directly from partition, not via FAT filesystem
+    /*
+    ret = app_storage_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize app storage");
+    } else {
+        ESP_LOGI(TAG, "✓ App storage initialized");
+        
+        // Mount storage partition
+        ret = app_storage_mount();
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to mount app storage (will format on first use)");
+        } else {
+            ESP_LOGI(TAG, "✓ App storage mounted");
+        }
+    }
+    */
+    ESP_LOGI(TAG, "✓ App storage disabled (using direct partition loading)");
+    
     // Initialize App Manager
     ret = app_manager_init();
     if (ret != ESP_OK) {
@@ -157,19 +178,15 @@ static void init_application_services(void)
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "Registering built-in apps...");
     
-    // Register Hello App
+    // Register Hello App (built-in)
     app_info_t *hello_info = NULL;
     ret = app_manager_register_app(&hello_app_manifest, &hello_info);
     if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "✓ Registered 'hello' app");
+        ESP_LOGI(TAG, "✓ Registered 'hello' app (built-in)");
     }
     
-    // Register Goodbye App
-    app_info_t *goodbye_info = NULL;
-    ret = app_manager_register_app(&goodbye_app_manifest, &goodbye_info);
-    if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "✓ Registered 'goodbye' app");
-    }
+    // NOTE: goodbye app will be loaded dynamically from partition (PSRAM)
+    ESP_LOGI(TAG, "NOTE: goodbye app will be loaded dynamically at runtime");
     
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "✓ Application services initialized");
@@ -262,18 +279,48 @@ static void main_task(void *pvParameters)
     
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "═══════════════════════════════════════");
-    ESP_LOGI(TAG, "Starting hello app...");
+    ESP_LOGI(TAG, "Starting hello app (built-in)...");
     ESP_LOGI(TAG, "═══════════════════════════════════════");
     app_manager_start_app("hello");
     
-    // Wait for hello to finish, then start goodbye
+    // Wait for hello to finish
     vTaskDelay(pdMS_TO_TICKS(8000));
     
+    // Load goodbye app dynamically from partition into PSRAM
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "═══════════════════════════════════════");
-    ESP_LOGI(TAG, "Starting goodbye app...");
+    ESP_LOGI(TAG, "Loading goodbye app dynamically (PSRAM)...");
     ESP_LOGI(TAG, "═══════════════════════════════════════");
-    app_manager_start_app("goodbye");
+    
+    app_info_t *goodbye_info = NULL;
+    // Load from partition at offset 0x0 (start of storage partition)
+    // Storage partition starts at 0x410000
+    // Code will be loaded into PSRAM but CANNOT be executed (hardware limitation)
+    esp_err_t ret = app_manager_load_from_partition("storage", 0x0, &goodbye_info);
+    
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "✓ Successfully loaded goodbye app from partition");
+        ESP_LOGI(TAG, "NOTE: App code is in PSRAM and CANNOT execute on ESP32-S3");
+        ESP_LOGI(TAG, "      (PSRAM is not executable - hardware limitation)");
+        ESP_LOGI(TAG, "");
+        ESP_LOGI(TAG, "To make this work, you need to:");
+        ESP_LOGI(TAG, "  1. Compile apps with -fPIC (position-independent code)");
+        ESP_LOGI(TAG, "  2. Implement ELF loader with relocations");
+        ESP_LOGI(TAG, "  3. Copy code to IRAM (limited ~200KB available)");
+        ESP_LOGI(TAG, "  4. Or use interpreted approach (Lua/Python VM)");
+        
+        // Attempt to start will fail with InstructionFetchError
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        
+        ESP_LOGI(TAG, "");
+        ESP_LOGI(TAG, "Attempting to start goodbye app (will fail)...");
+        app_manager_start_app("goodbye");
+    } else {
+        ESP_LOGE(TAG, "✗ Failed to load goodbye app: %s", esp_err_to_name(ret));
+        ESP_LOGI(TAG, "Note: Build and upload goodbye.bin with:");
+        ESP_LOGI(TAG, "  python3 build_dynamic_app.py goodbye");
+        ESP_LOGI(TAG, "  esptool.py --port /dev/tty.usbmodem5AE70236261 write_flash 0x410000 build/apps/goodbye.bin");
+    }
     
     vTaskDelay(pdMS_TO_TICKS(8000));
     

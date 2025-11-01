@@ -2,6 +2,7 @@
 #include "system_service/app_symbol_table.h"
 #include "system_service/memory_utils.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include <string.h>
 
 static const char *TAG = "app_loader";
@@ -79,9 +80,11 @@ esp_err_t app_verify_header(const app_header_t *header, size_t total_size)
     }
     
     // Check size
-    if (header->size == 0 || header->size + sizeof(app_header_t) != total_size) {
-        ESP_LOGE(TAG, "Size mismatch: header=%lu, total=%d",
-                 header->size, total_size);
+    // Note: Header is 128 bytes in binary format (padding for alignment)
+    const size_t BINARY_HEADER_SIZE = 128;
+    if (header->size == 0 || header->size + BINARY_HEADER_SIZE != total_size) {
+        ESP_LOGE(TAG, "Size mismatch: header=%lu, header_size=%zu, total=%zu (expected %lu)",
+                 header->size, BINARY_HEADER_SIZE, total_size, header->size + BINARY_HEADER_SIZE);
         return ESP_ERR_INVALID_SIZE;
     }
     
@@ -112,7 +115,9 @@ esp_err_t app_load_binary(const void *data, size_t size, app_info_t *info)
     }
     
     // Verify CRC32
-    const uint8_t *code = (const uint8_t *)data + sizeof(app_header_t);
+    // Note: Binary header is 128 bytes (not sizeof(app_header_t) which is 96)
+    const size_t BINARY_HEADER_SIZE = 128;
+    const uint8_t *code = (const uint8_t *)data + BINARY_HEADER_SIZE;
     uint32_t calculated_crc = app_calculate_crc32(code, header->size);
     
     if (calculated_crc != header->crc32) {
@@ -164,13 +169,14 @@ esp_err_t app_load_binary(const void *data, size_t size, app_info_t *info)
     strncpy(info->manifest.author, header->author, APP_MAX_AUTHOR_LEN - 1);
     
     // Entry point from header
-    if (header->entry_point > 0 && header->entry_point < header->size) {
+    if (header->entry_point < header->size) {
         // Entry point is offset from app base
         info->manifest.entry = (app_entry_fn_t)((uint8_t*)app_memory + header->entry_point);
         ESP_LOGI(TAG, "✓ Entry point at offset 0x%08lX (address: %p)",
                  header->entry_point, info->manifest.entry);
     } else {
-        ESP_LOGW(TAG, "No valid entry point in header, app may not be executable");
+        ESP_LOGW(TAG, "No valid entry point in header (offset=0x%08lX, size=%lu), app may not be executable",
+                 header->entry_point, header->size);
         info->manifest.entry = NULL;
     }
     
