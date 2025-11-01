@@ -1,0 +1,8 @@
+idf_component_register(
+    SRCS 
+        "src/bluetooth_service.c"
+    INCLUDE_DIRS 
+        "include"
+    REQUIRES
+        system
+)

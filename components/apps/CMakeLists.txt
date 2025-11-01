@@ -1,0 +1,10 @@
+idf_component_register(
+    SRCS 
+        "hello/hello_app.c"
+        "goodbye/goodbye_app.c"
+    INCLUDE_DIRS 
+        "hello"
+        "goodbye"
+    REQUIRES
+        system
+)

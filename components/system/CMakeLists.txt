@@ -1,0 +1,21 @@
+idf_component_register(
+    SRCS 
+        "src/system_service.c"
+        "src/service_manager.c"
+        "src/event_bus.c"
+        "src/security.c"
+        "src/app_manager.c"
+        "src/app_storage.c"
+        "src/app_downloader.c"
+        "src/app_loader.c"
+        "src/memory_utils.c"
+        "src/app_symbol_table.c"
+    INCLUDE_DIRS 
+        "include"
+    PRIV_INCLUDE_DIRS
+        "private"
+    REQUIRES
+        esp_timer
+        esp_http_client
+        spiffs
+)

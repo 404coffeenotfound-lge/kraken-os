@@ -1,0 +1,59 @@
+menu "System Service Configuration"
+
+    config SYSTEM_SERVICE_MAX_SERVICES
+        int "Maximum number of services"
+        default 16
+        range 1 64
+        help
+            Maximum number of services that can be registered with the system.
+
+    config SYSTEM_SERVICE_MAX_EVENT_TYPES
+        int "Maximum number of event types"
+        default 64
+        range 1 256
+        help
+            Maximum number of event types that can be registered.
+
+    config SYSTEM_SERVICE_MAX_SUBSCRIBERS
+        int "Maximum number of event subscribers"
+        default 32
+        range 1 128
+        help
+            Maximum number of concurrent event subscriptions.
+
+    config SYSTEM_SERVICE_EVENT_QUEUE_SIZE
+        int "Event queue size"
+        default 32
+        range 4 256
+        help
+            Size of the event queue for async event processing.
+
+    config SYSTEM_SERVICE_MAX_DATA_SIZE
+        int "Maximum event data size (bytes)"
+        default 512
+        range 64 4096
+        help
+            Maximum size of data payload for a single event.
+
+    config SYSTEM_SERVICE_EVENT_TASK_STACK_SIZE
+        int "Event task stack size (bytes)"
+        default 4096
+        range 2048 8192
+        help
+            Stack size for the event processing task.
+
+    config SYSTEM_SERVICE_EVENT_TASK_PRIORITY
+        int "Event task priority"
+        default 5
+        range 1 24
+        help
+            FreeRTOS task priority for event processing.
+
+    config SYSTEM_SERVICE_HEARTBEAT_TIMEOUT_MS
+        int "Service heartbeat timeout (ms)"
+        default 30000
+        range 1000 300000
+        help
+            Time in milliseconds before a service is considered unresponsive.
+
+endmenu
