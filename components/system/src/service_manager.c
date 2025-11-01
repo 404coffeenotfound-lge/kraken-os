@@ -259,7 +259,9 @@ esp_err_t system_service_list_all(system_service_info_t *out_services,
     uint32_t count = 0;
     for (int i = 0; i < SYSTEM_SERVICE_MAX_SERVICES && count < max_count; i++) {
         if (ctx->services[i].registered) {
-            strncpy(out_services[count].name, ctx->services[i].name, SYSTEM_SERVICE_MAX_NAME_LEN);
+            // Safely copy name with guaranteed null termination
+            memset(out_services[count].name, 0, SYSTEM_SERVICE_MAX_NAME_LEN);
+            strncpy(out_services[count].name, ctx->services[i].name, SYSTEM_SERVICE_MAX_NAME_LEN - 1);
             out_services[count].service_id = ctx->services[i].service_id;
             out_services[count].state = ctx->services[i].state;
             out_services[count].last_heartbeat = ctx->services[i].last_heartbeat;

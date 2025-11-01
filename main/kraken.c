@@ -200,20 +200,45 @@ static void print_system_stats(void)
         
         // List all registered services
         if (total_services > 0) {
-            system_service_info_t services[SYSTEM_SERVICE_MAX_SERVICES];
-            uint32_t count = 0;
-            
-            ret = system_service_list_all(services, SYSTEM_SERVICE_MAX_SERVICES, &count);
-            if (ret == ESP_OK && count > 0) {
-                ESP_LOGI(TAG, "");
-                ESP_LOGI(TAG, "Registered Services:");
-                for (uint32_t i = 0; i < count; i++) {
-                    ESP_LOGI(TAG, "  [%d] %-20s State: %d, Last HB: %lu ms",
-                             services[i].service_id,
-                             services[i].name,
-                             services[i].state,
-                             services[i].last_heartbeat);
+            // Allocate on heap to avoid stack overflow
+            system_service_info_t *services = calloc(SYSTEM_SERVICE_MAX_SERVICES, sizeof(system_service_info_t));
+            if (services == NULL) {
+                ESP_LOGE(TAG, "Failed to allocate memory for services list");
+            } else {
+                uint32_t count = 0;
+                
+                ret = system_service_list_all(services, SYSTEM_SERVICE_MAX_SERVICES, &count);
+                ESP_LOGI(TAG, "system_service_list_all returned: %d, count: %lu", ret, count);
+                if (ret == ESP_OK && count > 0) {
+                    ESP_LOGI(TAG, "");
+                    ESP_LOGI(TAG, "Registered Services (count=%lu):", count);
+                    
+                    // Sanity check: don't print more than we have
+                    if (count > SYSTEM_SERVICE_MAX_SERVICES) {
+                        ESP_LOGE(TAG, "ERROR: count (%lu) exceeds max (%d)!", count, SYSTEM_SERVICE_MAX_SERVICES);
+                        count = SYSTEM_SERVICE_MAX_SERVICES;
+                    }
+                    
+                    for (uint32_t i = 0; i < count; i++) {
+                        ESP_LOGI(TAG, "Service %lu: name ptr=%p, first char=0x%02x",
+                                 i, services[i].name, (unsigned char)services[i].name[0]);
+                        
+                        // Defensive: ensure name is valid before printing
+                        if (services[i].name[0] == '\0') {
+                            ESP_LOGI(TAG, "  [%d] <unnamed>           State: %d, Last HB: %lu ms",
+                                     services[i].service_id,
+                                     services[i].state,
+                                     services[i].last_heartbeat);
+                        } else {
+                            ESP_LOGI(TAG, "  [%d] %-20s State: %d, Last HB: %lu ms",
+                                     services[i].service_id,
+                                     services[i].name,
+                                     services[i].state,
+                                     services[i].last_heartbeat);
+                        }
+                    }
                 }
+                free(services);
             }
         }
         ESP_LOGI(TAG, "═══════════════════════════════════════════════════");
@@ -332,7 +357,7 @@ void app_main(void)
     BaseType_t task_ret = xTaskCreate(
         main_task,              // Task function
         "main_task",            // Task name
-        4096,                   // Stack size (bytes)
+        8192,                   // Stack size (bytes) - increased for stats printing
         NULL,                   // Parameters
         5,                      // Priority
         NULL                    // Task handle
