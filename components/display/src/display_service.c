@@ -1,8 +1,17 @@
+#include "esp_log.h"
+#include "driver/spi_master.h"
+#include "driver/gpio.h"
+#include "esp_lcd_panel_io.h"
+#include "esp_lcd_panel_ops.h"
+#include "esp_lcd_panel_vendor.h"
+#include "esp_lvgl_port.h"
+
 #include "display_service.h"
 #include "system_service/system_service.h"
 #include "system_service/service_manager.h"
 #include "system_service/event_bus.h"
-#include "esp_log.h"
+#include "ui_topbar.h"
+#include "ui_mainmenu.h"
 
 static const char *TAG = "display_service";
 
@@ -12,6 +21,283 @@ static bool initialized = false;
 static uint8_t current_brightness = 80;
 static bool screen_on_state = true;
 static display_orientation_t current_orientation = DISPLAY_ORIENTATION_0;
+
+// LCD handles
+static esp_lcd_panel_io_handle_t io_handle = NULL;
+static esp_lcd_panel_handle_t panel_handle = NULL;
+static lv_display_t *lvgl_disp = NULL;
+
+// Display configuration structure
+typedef struct {
+    spi_host_device_t host;
+    int dma_channel;
+    int pin_mosi;
+    int pin_sclk;
+    int pin_cs;
+    int pin_dc;
+    int pin_rst;
+    int pin_bl;
+    uint16_t hor_res;
+    uint16_t ver_res;
+} board_display_config_t;
+
+static const board_display_config_t s_display_config = {
+    .host = SPI2_HOST,
+    .dma_channel = SPI_DMA_CH_AUTO,
+    .pin_mosi = 17,
+    .pin_sclk = 18,
+    .pin_cs = 14,
+    .pin_dc = 15,
+    .pin_rst = 16,
+    .pin_bl = 13,
+    .hor_res = 240,
+    .ver_res = 320,
+};
+
+// Menu item callbacks
+static void menu_audio_clicked(void)
+{
+    ESP_LOGI(TAG, "Audio menu clicked");
+    // TODO: Navigate to audio settings
+}
+
+static void menu_network_clicked(void)
+{
+    ESP_LOGI(TAG, "Network menu clicked");
+    // TODO: Navigate to network settings
+}
+
+static void menu_bluetooth_clicked(void)
+{
+    ESP_LOGI(TAG, "Bluetooth menu clicked");
+    // TODO: Navigate to bluetooth settings
+}
+
+static void menu_display_clicked(void)
+{
+    ESP_LOGI(TAG, "Display menu clicked");
+    // TODO: Navigate to display settings
+}
+
+static void menu_apps_clicked(void)
+{
+    ESP_LOGI(TAG, "Apps menu clicked");
+    // TODO: Navigate to apps list
+}
+
+static esp_err_t init_ui(void)
+{
+    ESP_LOGI(TAG, "Initializing UI...");
+    
+    // Lock LVGL mutex
+    if (lvgl_port_lock(0)) {
+        lv_obj_t *screen = lv_scr_act();
+        
+        // Set screen background to black
+        lv_obj_set_style_bg_color(screen, lv_color_hex(0x000000), 0);
+        
+        // Create top bar with NULL config (use defaults)
+        lv_obj_t *topbar = ui_topbar_create(screen, NULL);
+        if (topbar == NULL) {
+            ESP_LOGE(TAG, "Failed to create top bar");
+            lvgl_port_unlock();
+            return ESP_FAIL;
+        }
+        
+        // Initialize status icons
+        ui_topbar_update_time(12, 0);
+        ui_topbar_update_wifi(false, 0);
+        ui_topbar_update_bluetooth(false);
+        ui_topbar_update_battery(85, false);
+        
+        // Create main menu items
+        static const ui_menu_item_t menu_items[] = {
+            { .label = "Audio",      .icon = LV_SYMBOL_AUDIO,      .callback = menu_audio_clicked },
+            { .label = "Network",    .icon = LV_SYMBOL_WIFI,       .callback = menu_network_clicked },
+            { .label = "Bluetooth",  .icon = LV_SYMBOL_BLUETOOTH,  .callback = menu_bluetooth_clicked },
+            { .label = "Display",    .icon = LV_SYMBOL_IMAGE,      .callback = menu_display_clicked },
+            { .label = "Apps",       .icon = LV_SYMBOL_LIST,       .callback = menu_apps_clicked },
+        };
+        
+        // Create main menu
+        uint16_t topbar_height = ui_topbar_get_height();
+        lv_obj_t *menu = ui_mainmenu_create(screen, topbar_height, menu_items, 
+                                            sizeof(menu_items) / sizeof(menu_items[0]), NULL);
+        if (menu == NULL) {
+            ESP_LOGE(TAG, "Failed to create main menu");
+            lvgl_port_unlock();
+            return ESP_FAIL;
+        }
+        
+        ESP_LOGI(TAG, "✓ UI created successfully");
+        
+        // Unlock LVGL mutex
+        lvgl_port_unlock();
+        
+        return ESP_OK;
+    }
+    
+    ESP_LOGE(TAG, "Failed to lock LVGL mutex");
+    return ESP_FAIL;
+}
+
+static esp_err_t config_lcd_display(void)
+{
+    esp_err_t ret;
+    
+    ESP_LOGI(TAG, "Configuring LCD display...");
+    
+    // 1. Initialize SPI bus
+    const spi_bus_config_t bus_config = {
+        .sclk_io_num = s_display_config.pin_sclk,
+        .mosi_io_num = s_display_config.pin_mosi,
+        .miso_io_num = -1,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+        .max_transfer_sz = s_display_config.hor_res * 80 * sizeof(uint16_t),
+    };
+
+    ret = spi_bus_initialize(s_display_config.host, &bus_config, s_display_config.dma_channel);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize SPI bus: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    ESP_LOGI(TAG, "✓ SPI bus initialized");
+
+    // 2. Configure LCD panel I/O (SPI interface)
+    const esp_lcd_panel_io_spi_config_t io_config = {
+        .dc_gpio_num = s_display_config.pin_dc,
+        .cs_gpio_num = s_display_config.pin_cs,
+        .pclk_hz = 40 * 1000 * 1000,  // 40 MHz for stable operation
+        .lcd_cmd_bits = 8,
+        .lcd_param_bits = 8,
+        .spi_mode = 0,
+        .trans_queue_depth = 10,
+    };
+
+    ret = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)s_display_config.host, &io_config, &io_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create LCD panel I/O: %s", esp_err_to_name(ret));
+        spi_bus_free(s_display_config.host);
+        return ret;
+    }
+    ESP_LOGI(TAG, "✓ LCD panel I/O created");
+
+    // 3. Configure ST7789 panel
+    const esp_lcd_panel_dev_config_t panel_config = {
+        .reset_gpio_num = s_display_config.pin_rst,
+        .color_space = ESP_LCD_COLOR_SPACE_RGB,
+        .bits_per_pixel = 16,
+    };
+    
+    ret = esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create ST7789 panel: %s", esp_err_to_name(ret));
+        esp_lcd_panel_io_del(io_handle);
+        spi_bus_free(s_display_config.host);
+        return ret;
+    }
+    ESP_LOGI(TAG, "✓ ST7789 panel created");
+
+    // 4. Reset and initialize panel
+    ret = esp_lcd_panel_reset(panel_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to reset panel: %s", esp_err_to_name(ret));
+        goto cleanup;
+    }
+    
+    ret = esp_lcd_panel_init(panel_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to init panel: %s", esp_err_to_name(ret));
+        goto cleanup;
+    }
+    ESP_LOGI(TAG, "✓ Panel reset and initialized");
+
+    // 5. Set display orientation (portrait)
+    ret = esp_lcd_panel_swap_xy(panel_handle, false);
+    if (ret != ESP_OK) goto cleanup;
+    
+    ret = esp_lcd_panel_mirror(panel_handle, false, false);
+    if (ret != ESP_OK) goto cleanup;
+    
+    // 6. Turn on display
+    ret = esp_lcd_panel_disp_on_off(panel_handle, true);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to turn on display: %s", esp_err_to_name(ret));
+        goto cleanup;
+    }
+    ESP_LOGI(TAG, "✓ Display turned ON");
+
+    // 7. Initialize backlight (simple GPIO control)
+    if (s_display_config.pin_bl >= 0) {
+        gpio_config_t bl_gpio_config = {
+            .mode = GPIO_MODE_OUTPUT,
+            .pin_bit_mask = 1ULL << s_display_config.pin_bl
+        };
+        gpio_config(&bl_gpio_config);
+        gpio_set_level(s_display_config.pin_bl, 1);  // Turn on backlight
+        ESP_LOGI(TAG, "✓ Backlight enabled (pin %d)", s_display_config.pin_bl);
+    }
+
+    // 8. Initialize LVGL port
+    const lvgl_port_cfg_t lvgl_cfg = {
+        .task_priority = configMAX_PRIORITIES - 3,
+        .task_stack = 6144,
+        .task_affinity = 1,
+        .timer_period_ms = 5,
+    };
+    
+    ret = lvgl_port_init(&lvgl_cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize LVGL port: %s", esp_err_to_name(ret));
+        goto cleanup;
+    }
+    ESP_LOGI(TAG, "✓ LVGL port initialized");
+
+    // 9. Create LVGL display
+    const lvgl_port_display_cfg_t disp_cfg = {
+        .io_handle = io_handle,
+        .panel_handle = panel_handle,
+        .buffer_size = s_display_config.hor_res * 50,
+        .double_buffer = true,
+        .hres = s_display_config.hor_res,
+        .vres = s_display_config.ver_res,
+        .monochrome = false,
+        .color_format = LV_COLOR_FORMAT_RGB565,
+        .flags = {
+            .swap_bytes = 1,
+        },
+    };
+
+    lvgl_disp = lvgl_port_add_disp(&disp_cfg);
+    if (lvgl_disp == NULL) {
+        ESP_LOGE(TAG, "Failed to create LVGL display");
+        ret = ESP_FAIL;
+        goto cleanup;
+    }
+    ESP_LOGI(TAG, "✓ LVGL display created (%dx%d)", s_display_config.hor_res, s_display_config.ver_res);
+    
+    // Set display as default
+    if (lvgl_port_lock(pdMS_TO_TICKS(1000))) {
+        lv_disp_set_default(lvgl_disp);
+        lvgl_port_unlock();
+    }
+
+    ESP_LOGI(TAG, "✓ LCD display configuration complete!");
+    return ESP_OK;
+
+cleanup:
+    if (panel_handle) {
+        esp_lcd_panel_del(panel_handle);
+        panel_handle = NULL;
+    }
+    if (io_handle) {
+        esp_lcd_panel_io_del(io_handle);
+        io_handle = NULL;
+    }
+    spi_bus_free(s_display_config.host);
+    return ret;
+} 
 
 esp_err_t display_service_init(void)
 {
@@ -55,6 +341,21 @@ esp_err_t display_service_init(void)
     
     ESP_LOGI(TAG, "✓ Registered %d event types", 8);
     
+    // Initialize LCD hardware
+    ret = config_lcd_display();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to configure LCD display");
+        system_service_unregister(display_service_id);
+        return ret;
+    }
+    
+    // Initialize UI (topbar + main menu)
+    ret = init_ui();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize UI");
+        // Continue anyway - display is functional
+    }
+    
     // Set service state
     system_service_set_state(display_service_id, SYSTEM_SERVICE_STATE_REGISTERED);
     
@@ -79,6 +380,34 @@ esp_err_t display_service_deinit(void)
     }
     
     ESP_LOGI(TAG, "Deinitializing display service...");
+    
+    // Clean up LVGL
+    if (lvgl_disp) {
+        lvgl_port_remove_disp(lvgl_disp);
+        lvgl_disp = NULL;
+    }
+    lvgl_port_deinit();
+    
+    // Turn off backlight
+    if (s_display_config.pin_bl >= 0) {
+        gpio_set_level(s_display_config.pin_bl, 0);
+    }
+    
+    // Clean up LCD panel
+    if (panel_handle) {
+        esp_lcd_panel_disp_on_off(panel_handle, false);
+        esp_lcd_panel_del(panel_handle);
+        panel_handle = NULL;
+    }
+    
+    // Clean up panel I/O
+    if (io_handle) {
+        esp_lcd_panel_io_del(io_handle);
+        io_handle = NULL;
+    }
+    
+    // Free SPI bus
+    spi_bus_free(s_display_config.host);
     
     system_service_unregister(display_service_id);
     initialized = false;
@@ -143,6 +472,13 @@ esp_err_t display_set_brightness(uint8_t brightness)
     
     current_brightness = brightness;
     
+    // Control backlight PWM or simple on/off
+    // For simple GPIO control, map brightness to on/off
+    if (s_display_config.pin_bl >= 0) {
+        gpio_set_level(s_display_config.pin_bl, brightness > 0 ? 1 : 0);
+        // TODO: Use LEDC PWM for proper brightness control
+    }
+    
     display_brightness_event_t event_data = {
         .brightness = brightness
     };
@@ -172,11 +508,19 @@ esp_err_t display_get_brightness(uint8_t *brightness)
 
 esp_err_t display_screen_on(void)
 {
-    if (!initialized) {
+    if (!initialized || !panel_handle) {
         return ESP_ERR_INVALID_STATE;
     }
     
     ESP_LOGI(TAG, "Turning screen ON");
+    
+    // Turn on LCD panel
+    esp_lcd_panel_disp_on_off(panel_handle, true);
+    
+    // Turn on backlight
+    if (s_display_config.pin_bl >= 0) {
+        gpio_set_level(s_display_config.pin_bl, 1);
+    }
     
     screen_on_state = true;
     
@@ -192,11 +536,19 @@ esp_err_t display_screen_on(void)
 
 esp_err_t display_screen_off(void)
 {
-    if (!initialized) {
+    if (!initialized || !panel_handle) {
         return ESP_ERR_INVALID_STATE;
     }
     
     ESP_LOGI(TAG, "Turning screen OFF");
+    
+    // Turn off backlight
+    if (s_display_config.pin_bl >= 0) {
+        gpio_set_level(s_display_config.pin_bl, 0);
+    }
+    
+    // Turn off LCD panel
+    esp_lcd_panel_disp_on_off(panel_handle, false);
     
     screen_on_state = false;
     
@@ -212,11 +564,51 @@ esp_err_t display_screen_off(void)
 
 esp_err_t display_set_orientation(display_orientation_t orientation)
 {
-    if (!initialized) {
+    if (!initialized || !panel_handle) {
         return ESP_ERR_INVALID_STATE;
     }
     
+    esp_err_t ret;
     current_orientation = orientation;
+    
+    // Configure panel orientation
+    switch (orientation) {
+        case DISPLAY_ORIENTATION_0:
+            ret = esp_lcd_panel_swap_xy(panel_handle, false);
+            if (ret == ESP_OK) {
+                ret = esp_lcd_panel_mirror(panel_handle, false, false);
+            }
+            break;
+            
+        case DISPLAY_ORIENTATION_90:
+            ret = esp_lcd_panel_swap_xy(panel_handle, true);
+            if (ret == ESP_OK) {
+                ret = esp_lcd_panel_mirror(panel_handle, false, true);
+            }
+            break;
+            
+        case DISPLAY_ORIENTATION_180:
+            ret = esp_lcd_panel_swap_xy(panel_handle, false);
+            if (ret == ESP_OK) {
+                ret = esp_lcd_panel_mirror(panel_handle, true, true);
+            }
+            break;
+            
+        case DISPLAY_ORIENTATION_270:
+            ret = esp_lcd_panel_swap_xy(panel_handle, true);
+            if (ret == ESP_OK) {
+                ret = esp_lcd_panel_mirror(panel_handle, true, false);
+            }
+            break;
+            
+        default:
+            return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set orientation: %s", esp_err_to_name(ret));
+        return ret;
+    }
     
     display_orientation_event_t event_data = {
         .orientation = orientation
