@@ -117,6 +117,19 @@ esp_err_t app_manager_list_apps(app_info_t *apps, size_t max_count, size_t *out_
 
 esp_err_t app_manager_get_running_apps(app_info_t *apps, size_t max_count, size_t *out_count);
 
+/**
+ * @brief Load app from flash partition using memory mapping
+ * 
+ * This function loads an app directly from flash and maps the code section
+ * into instruction cache for execution. This avoids PSRAM execution limitations.
+ * 
+ * @param partition_label Flash partition label (e.g., "app_store")
+ * @param offset Offset within partition where app binary starts
+ * @param info Output app info structure
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t flash_app_load(const char *partition_label, size_t offset, app_info_t *info);
+
 #ifdef __cplusplus
 }
 #endif

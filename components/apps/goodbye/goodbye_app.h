@@ -7,11 +7,8 @@
 extern "C" {
 #endif
 
+// App manifest - exported for registration
 extern const app_manifest_t goodbye_app_manifest;
-
-esp_err_t goodbye_app_entry(app_context_t *ctx);
-
-esp_err_t goodbye_app_exit(app_context_t *ctx);
 
 #ifdef __cplusplus
 }

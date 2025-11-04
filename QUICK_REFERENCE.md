@@ -3,18 +3,15 @@
 ## Build Commands
 
 ```bash
-# Build firmware
+# Build firmware (with built-in apps)
 idf.py build
-
-# Build dynamic apps
-python build_dynamic_app.py hello        # Single app
-python build_dynamic_app.py --all        # All apps
 
 # Flash firmware
 idf.py flash monitor
 
-# Upload app to storage
-esptool.py write_flash 0x410000 build/apps/hello.bin
+# Clean build
+idf.py fullclean
+idf.py build
 ```
 
 ## Memory Macros
@@ -42,21 +39,28 @@ memory_get_free_psram();
 
 ```c
 #include "system_service/app_manager.h"
+#include "system_service/service_manager.h"
+#include "system_service/event_bus.h"
 #include "system_service/memory_utils.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static const char *TAG = "myapp";
-APP_DATA_ATTR static uint8_t app_buffer[10240];
 
 esp_err_t myapp_entry(app_context_t *ctx) {
-    memory_log_usage(TAG);
+    ESP_LOGI(TAG, "App started!");
     
-    uint8_t *data = APP_MALLOC(50000);
-    if (!data) return ESP_ERR_NO_MEM;
+    system_service_id_t service_id = ctx->service_id;
+    ctx->set_state(service_id, SYSTEM_SERVICE_STATE_RUNNING);
     
-    // Your code here...
+    // Your app logic
+    for (int i = 0; i < 10; i++) {
+        ESP_LOGI(TAG, "Count: %d", i);
+        ctx->heartbeat(service_id);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
     
-    free(data);
     return ESP_OK;
 }
 
@@ -74,28 +78,19 @@ const app_manifest_t myapp_manifest = {
 };
 ```
 
-## Runtime Loading
+## App Context API
 
 ```c
-// Load from storage
-app_info_t info;
-app_manager_load_from_storage("/storage/apps/hello.bin", &info);
-app_manager_start_app("hello");
+// Service management
+ctx->set_state(service_id, SYSTEM_SERVICE_STATE_RUNNING);
+ctx->heartbeat(service_id);
 
-// Load from network
-app_manager_load_from_url("http://server/hello.bin", &info);
-app_manager_start_app("hello");
-```
-
-## Event Bus
-
-```c
-// Register event type
+// Event registration
 system_event_type_t my_event;
-ctx->register_event_type("app.myapp.started", &my_event);
+ctx->register_event_type("app.myapp.custom", &my_event);
 
-// Post event
-ctx->post_event(ctx->service_id, my_event, &data, 
+// Event posting
+ctx->post_event(service_id, my_event, &data, 
                 sizeof(data), SYSTEM_EVENT_PRIORITY_NORMAL);
 
 // Subscribe to event
@@ -103,26 +98,49 @@ ctx->subscribe_event(ctx->service_id, some_event,
                      event_handler, user_data);
 ```
 
+## App Registration & Startup
+
+```c
+// In main/kraken.c
+#include "hello_app.h"
+#include "goodbye_app.h"
+
+// Register apps at startup
+app_info_t *app_info = NULL;
+app_manager_register_app(&hello_app_manifest, &app_info);
+app_manager_register_app(&goodbye_app_manifest, &app_info);
+
+// Start apps (delayed)
+vTaskDelay(pdMS_TO_TICKS(2000));
+app_manager_start_app("hello");
+app_manager_start_app("goodbye");
+```
+
 ## File Locations
 
 ```
-kraken/
+kraken-os/
 ├── components/apps/          # App source code
-├── build/apps/              # Built app binaries
-├── docs/                    # Documentation
-├── build_dynamic_app.py     # Build tool
-└── sdkconfig.defaults       # Config
+├── components/system/        # System services
+├── main/                     # Main firmware entry
+├── docs/                     # Documentation
+└── sdkconfig.defaults       # ESP-IDF config
 ```
 
-## Partition Table
+## Common Event Types
 
-```
-Offset    | Size | Description
-----------|------|---------------------------
-0x9000    | 20K  | NVS
-0xe000    | 4K   | PHY Init
-0x10000   | 4MB  | Firmware (kraken.bin)
-0x410000  | 1MB  | Storage (apps, data)
+```c
+// System events (0-99)
+COMMON_EVENT_SYSTEM_STARTUP     = 0
+COMMON_EVENT_SYSTEM_SHUTDOWN    = 1
+
+// Network events (100-199)
+COMMON_EVENT_NETWORK_CONNECTED  = 100
+COMMON_EVENT_NETWORK_DISCONNECTED = 101
+
+// App events (200-299)
+COMMON_EVENT_APP_STARTED        = 200
+COMMON_EVENT_APP_STOPPED        = 201
 ```
 
 ## Documentation
@@ -130,10 +148,10 @@ Offset    | Size | Description
 | File | Purpose |
 |------|---------|
 | README.md | Main documentation |
-| DYNAMIC_LOADING.md | Dynamic loader guide |
-| MEMORY_MANAGEMENT.md | SRAM/PSRAM strategy |
-| BUILDING_APPS.md | App building methods |
-| QUICK_START.md | Getting started |
+| docs/ARCHITECTURE.md | System architecture |
+| docs/APPS_VS_SERVICES.md | App/service integration |
+| docs/MEMORY_MANAGEMENT.md | SRAM/PSRAM strategy |
+| docs/INDEX.md | Documentation index |
 
 ## Troubleshooting
 
@@ -141,16 +159,16 @@ Offset    | Size | Description
 # Clean build
 idf.py fullclean && idf.py build
 
-# Check memory
+# Monitor output
+idf.py monitor
+
+# Check memory in code
 memory_log_usage("debug");
 
 # Verify PSRAM
 if (!memory_psram_available()) {
     ESP_LOGE(TAG, "No PSRAM!");
 }
-
-# Check app binary
-hexdump -C build/apps/hello.bin | head -20
 ```
 
 ## Key Concepts

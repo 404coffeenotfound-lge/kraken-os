@@ -15,17 +15,26 @@ components/system/
 │   ├── system_types.h          # Core types and enums
 │   ├── system_service.h        # Secure APIs (require key)
 │   ├── service_manager.h       # Service registration APIs
-│   └── event_bus.h             # Event publish/subscribe APIs
+│   ├── event_bus.h             # Event publish/subscribe APIs
+│   ├── app_manager.h           # App lifecycle management
+│   ├── app_storage.h           # App storage/persistence
+│   ├── common_events.h         # Pre-defined event types
+│   └── memory_utils.h          # Memory utilities
 │
 ├── private/                     # PRIVATE HEADERS (internal only)
 │   ├── system_internal.h       # Internal data structures
-│   └── security.h              # Security key functions
+│   ├── security.h              # Security key functions
+│   └── app_internal.h          # App registry structures
 │
 ├── src/                         # IMPLEMENTATION
 │   ├── system_service.c        # Core system service
 │   ├── service_manager.c       # Service management
 │   ├── event_bus.c             # Event bus implementation
-│   └── security.c              # Security functions
+│   ├── security.c              # Security functions
+│   ├── app_manager.c           # App lifecycle manager
+│   ├── app_storage.c           # App storage implementation
+│   ├── memory_utils.c          # Memory utilities
+│   └── common_events.c         # Common events initialization
 │
 └── examples/                    # USAGE EXAMPLES
     └── basic_example.c         # Demonstration code
@@ -72,7 +81,29 @@ components/system/
 
 **Purpose**: Inter-service communication
 
-### 5. **security.h/.c** - Security (PRIVATE)
+### 6. **app_manager.h/.c** - Application Lifecycle (PUBLIC)
+**No key required - any component can use**
+- `app_manager_init()` - Initialize app registry
+- `app_manager_register_app()` - Register app manifest
+- `app_manager_start_app()` - Start app task
+- `app_manager_stop_app()` - Stop app
+- `app_manager_pause_app()` - Pause app
+- `app_manager_resume_app()` - Resume app
+- `app_manager_get_info()` - Get app info
+- `app_manager_list_apps()` - List all apps
+
+**Purpose**: Manages app lifecycle, creates app contexts with system API access
+
+### 7. **common_events.h/.c** - Pre-defined Events (PUBLIC)
+**No key required - any component can use**
+- `common_events_init()` - Register common event types
+- `COMMON_EVENT_SYSTEM_STARTUP` - System events (0-99)
+- `COMMON_EVENT_NETWORK_CONNECTED` - Network events (100-199)
+- `COMMON_EVENT_APP_STARTED` - App events (200-299)
+
+**Purpose**: Standard event types available to all components
+
+### 8. **security.h/.c** - Security (PRIVATE)
 **Internal use only**
 - `security_generate_key()` - Generate secure key
 - `security_validate_key()` - Validate key
@@ -80,13 +111,21 @@ components/system/
 
 **Purpose**: Secure key generation and validation
 
-### 6. **system_internal.h** - Internal Structures (PRIVATE)
+### 9. **system_internal.h** - Internal Structures (PRIVATE)
 **Internal use only**
 - `system_context_t` - Global system state
 - Service/event/subscription entries
 - Internal helper functions
 
 **Purpose**: Shared internal data structures
+
+### 10. **app_internal.h** - App Registry (PRIVATE)
+**Internal use only**
+- `app_registry_t` - Global app registry
+- `app_registry_entry_t` - Per-app state
+- Internal app management functions
+
+**Purpose**: App lifecycle state tracking
 
 ## Security Model
 

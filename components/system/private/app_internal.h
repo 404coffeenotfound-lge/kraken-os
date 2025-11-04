@@ -40,6 +40,9 @@ esp_err_t app_verify_header(const app_header_t *header, size_t total_size);
 
 uint32_t app_calculate_crc32(const uint8_t *data, size_t size);
 
+// Flash-based dynamic loader
+esp_err_t flash_app_load(const char *partition_label, size_t offset, app_info_t *info);
+
 #ifdef __cplusplus
 }
 #endif

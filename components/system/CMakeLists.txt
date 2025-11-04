@@ -6,10 +6,8 @@ idf_component_register(
         "src/security.c"
         "src/app_manager.c"
         "src/app_storage.c"
-        "src/app_downloader.c"
-        "src/app_loader.c"
         "src/memory_utils.c"
-        "src/app_symbol_table.c"
+        "src/common_events.c"
     INCLUDE_DIRS 
         "include"
     PRIV_INCLUDE_DIRS

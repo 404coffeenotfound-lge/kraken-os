@@ -1,6 +1,5 @@
 #include "system_service/system_service.h"
 #include "system_service/memory_utils.h"
-#include "system_service/app_symbol_table.h"
 #include "system_internal.h"
 #include "security.h"
 #include "esp_log.h"
@@ -113,9 +112,6 @@ esp_err_t system_service_init(system_secure_key_t *out_secure_key)
     g_system_ctx.running = false;
     
     ESP_LOGI(TAG, "System service initialized successfully");
-    
-    // Initialize symbol table for dynamic apps
-    symbol_table_init();
     
     // Log initial memory state
     memory_log_usage(TAG);

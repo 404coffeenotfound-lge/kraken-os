@@ -12,6 +12,8 @@
 #include "esp_chip_info.h"
 #include "esp_flash.h"
 #include "esp_timer.h"
+#include "esp_ota_ops.h"
+#include "esp_partition.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -28,7 +30,9 @@
 
 // App manager and example apps
 #include "system_service/app_manager.h"
+#include "system_service/common_events.h"
 #include "hello_app.h"
+#include "goodbye_app.h"
 // goodbye_app will be loaded dynamically from partition
 // #include "goodbye_app.h"
 
@@ -73,6 +77,35 @@ static void print_system_info(void)
     ESP_LOGI(TAG, "  ESP-IDF:      %s", esp_get_idf_version());
     ESP_LOGI(TAG, "  Free heap:    %lu bytes", esp_get_free_heap_size());
     ESP_LOGI(TAG, "  Min free heap:%lu bytes", esp_get_minimum_free_heap_size());
+    ESP_LOGI(TAG, "");
+    
+    // Print boot partition information
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    const esp_partition_t *boot = esp_ota_get_boot_partition();
+    
+    ESP_LOGI(TAG, "Boot Partition Information:");
+    if (running) {
+        ESP_LOGI(TAG, "  Running from: %s (0x%lx)",
+                 running->label, running->address);
+    }
+    if (boot) {
+        ESP_LOGI(TAG, "  Boot partition: %s (0x%lx)",
+                 boot->label, boot->address);
+    }
+    
+    esp_ota_img_states_t ota_state;
+    if (running && esp_ota_get_state_partition(running, &ota_state) == ESP_OK) {
+        const char *state_str = "UNKNOWN";
+        switch (ota_state) {
+            case ESP_OTA_IMG_NEW: state_str = "NEW"; break;
+            case ESP_OTA_IMG_PENDING_VERIFY: state_str = "PENDING_VERIFY"; break;
+            case ESP_OTA_IMG_VALID: state_str = "VALID"; break;
+            case ESP_OTA_IMG_INVALID: state_str = "INVALID"; break;
+            case ESP_OTA_IMG_ABORTED: state_str = "ABORTED"; break;
+            case ESP_OTA_IMG_UNDEFINED: state_str = "UNDEFINED"; break;
+        }
+        ESP_LOGI(TAG, "  OTA state:    %s", state_str);
+    }
     ESP_LOGI(TAG, "");
 }
 
@@ -143,6 +176,14 @@ static void init_application_services(void)
     */
     ESP_LOGI(TAG, "✓ App storage disabled (using direct partition loading)");
     
+    // Initialize common events (pre-registered event types for flash apps)
+    ret = common_events_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize common events");
+    } else {
+        ESP_LOGI(TAG, "✓ Common events initialized");
+    }
+    
     // Initialize App Manager
     ret = app_manager_init();
     if (ret != ESP_OK) {
@@ -185,8 +226,12 @@ static void init_application_services(void)
         ESP_LOGI(TAG, "✓ Registered 'hello' app (built-in)");
     }
     
-    // NOTE: goodbye app will be loaded dynamically from partition (PSRAM)
-    ESP_LOGI(TAG, "NOTE: goodbye app will be loaded dynamically at runtime");
+    // Register Goodbye App (built-in)
+    app_info_t *goodbye_info = NULL;
+    ret = app_manager_register_app(&goodbye_app_manifest, &goodbye_info);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "✓ Registered 'goodbye' app (built-in)");
+    }
     
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "✓ Application services initialized");
@@ -286,42 +331,14 @@ static void main_task(void *pvParameters)
     // Wait for hello to finish
     vTaskDelay(pdMS_TO_TICKS(8000));
     
-    // Load goodbye app dynamically from partition into PSRAM
+    // Start goodbye app
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "═══════════════════════════════════════");
-    ESP_LOGI(TAG, "Loading goodbye app dynamically (PSRAM)...");
+    ESP_LOGI(TAG, "Starting goodbye app...");
     ESP_LOGI(TAG, "═══════════════════════════════════════");
+    app_manager_start_app("goodbye");
     
-    app_info_t *goodbye_info = NULL;
-    // Load from partition at offset 0x0 (start of storage partition)
-    // Storage partition starts at 0x410000
-    // Code will be loaded into PSRAM but CANNOT be executed (hardware limitation)
-    esp_err_t ret = app_manager_load_from_partition("storage", 0x0, &goodbye_info);
-    
-    if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "✓ Successfully loaded goodbye app from partition");
-        ESP_LOGI(TAG, "NOTE: App code is in PSRAM and CANNOT execute on ESP32-S3");
-        ESP_LOGI(TAG, "      (PSRAM is not executable - hardware limitation)");
-        ESP_LOGI(TAG, "");
-        ESP_LOGI(TAG, "To make this work, you need to:");
-        ESP_LOGI(TAG, "  1. Compile apps with -fPIC (position-independent code)");
-        ESP_LOGI(TAG, "  2. Implement ELF loader with relocations");
-        ESP_LOGI(TAG, "  3. Copy code to IRAM (limited ~200KB available)");
-        ESP_LOGI(TAG, "  4. Or use interpreted approach (Lua/Python VM)");
-        
-        // Attempt to start will fail with InstructionFetchError
-        vTaskDelay(pdMS_TO_TICKS(2000));
-        
-        ESP_LOGI(TAG, "");
-        ESP_LOGI(TAG, "Attempting to start goodbye app (will fail)...");
-        app_manager_start_app("goodbye");
-    } else {
-        ESP_LOGE(TAG, "✗ Failed to load goodbye app: %s", esp_err_to_name(ret));
-        ESP_LOGI(TAG, "Note: Build and upload goodbye.bin with:");
-        ESP_LOGI(TAG, "  python3 build_dynamic_app.py goodbye");
-        ESP_LOGI(TAG, "  esptool.py --port /dev/tty.usbmodem5AE70236261 write_flash 0x410000 build/apps/goodbye.bin");
-    }
-    
+    // Wait for goodbye to finish
     vTaskDelay(pdMS_TO_TICKS(8000));
     
     // List all apps
