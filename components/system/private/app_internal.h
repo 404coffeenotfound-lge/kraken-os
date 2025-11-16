@@ -2,6 +2,7 @@
 #define APP_INTERNAL_H
 
 #include "system_service/app_manager.h"
+#include "system_service/app_loader.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -17,6 +18,7 @@ typedef struct {
     bool registered;
     TaskHandle_t task_handle;
     app_context_t context;
+    loaded_app_t loaded_app;  // Dynamic app data (if is_dynamic == true)
 } app_registry_entry_t;
 
 typedef struct {

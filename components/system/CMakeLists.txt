@@ -6,6 +6,7 @@ idf_component_register(
         "src/security.c"
         "src/app_manager.c"
         "src/app_storage.c"
+        "src/app_loader.c"
         "src/memory_utils.c"
         "src/common_events.c"
     INCLUDE_DIRS 
@@ -15,5 +16,7 @@ idf_component_register(
     REQUIRES
         esp_timer
         esp_http_client
+        esp_partition
+        spi_flash
         spiffs
 )

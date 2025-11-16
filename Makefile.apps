@@ -1,0 +1,118 @@
+# Makefile for building dynamic apps in Kraken OS
+#
+# Usage:
+#   make app APP=hello        - Build hello app
+#   make flash-app APP=hello  - Flash hello app to device
+#   make all-apps             - Build all apps in components/apps/
+#   make clean                - Clean all build artifacts
+
+# Configuration
+APP_DIR = components/apps
+BUILD_DIR = build/apps
+OUTPUT_DIR = build/app_binaries
+PORT ?= /dev/ttyUSB0
+
+# Find all apps
+APPS = $(notdir $(wildcard $(APP_DIR)/*))
+
+# Default target
+.PHONY: help
+help:
+	@echo "Kraken OS Dynamic App Builder"
+	@echo ""
+	@echo "Available targets:"
+	@echo "  make app APP=<name>        - Build a specific app"
+	@echo "  make flash-app APP=<name>  - Flash app to partition"
+	@echo "  make all-apps              - Build all apps"
+	@echo "  make list-apps             - List available apps"
+	@echo "  make clean                 - Clean build artifacts"
+	@echo ""
+	@echo "Available apps:"
+	@for app in $(APPS); do echo "  - $$app"; done
+	@echo ""
+	@echo "Environment variables:"
+	@echo "  PORT - Serial port (default: /dev/ttyUSB0)"
+
+# Build a specific app
+.PHONY: app
+app:
+ifndef APP
+	@echo "Error: APP not specified"
+	@echo "Usage: make app APP=hello"
+	@exit 1
+endif
+	@echo "Building app: $(APP)"
+	./build_pic_app.sh $(APP)
+
+# Build all apps
+.PHONY: all-apps
+all-apps:
+	@echo "Building all apps..."
+	@for app in $(APPS); do \
+		echo "Building $$app..."; \
+		./build_pic_app.sh $$app || exit 1; \
+	done
+	@echo "All apps built successfully!"
+
+# Flash app to partition
+.PHONY: flash-app
+flash-app:
+ifndef APP
+	@echo "Error: APP not specified"
+	@echo "Usage: make flash-app APP=hello"
+	@exit 1
+endif
+	@if [ ! -f "$(OUTPUT_DIR)/$(APP).elf" ]; then \
+		echo "Error: $(APP).elf not found. Build it first with: make app APP=$(APP)"; \
+		exit 1; \
+	fi
+	@echo "Flashing $(APP) to partition 'app_store'..."
+	python3 -m esptool --port $(PORT) write_flash 0x410000 $(OUTPUT_DIR)/$(APP).elf
+	@echo "App flashed successfully!"
+
+# List available apps
+.PHONY: list-apps
+list-apps:
+	@echo "Available apps in $(APP_DIR):"
+	@for app in $(APPS); do \
+		echo "  - $$app"; \
+	done
+
+# Clean build artifacts
+.PHONY: clean
+clean:
+	@echo "Cleaning build artifacts..."
+	rm -rf $(BUILD_DIR)
+	rm -rf $(OUTPUT_DIR)
+	@echo "Clean complete!"
+
+# Info about a specific app
+.PHONY: info
+info:
+ifndef APP
+	@echo "Error: APP not specified"
+	@echo "Usage: make info APP=hello"
+	@exit 1
+endif
+	@if [ ! -f "$(OUTPUT_DIR)/$(APP).bin" ]; then \
+		echo "App $(APP) not built yet."; \
+		echo "Build it with: make app APP=$(APP)"; \
+	else \
+		echo "App: $(APP)"; \
+		echo "Binary: $(OUTPUT_DIR)/$(APP).bin"; \
+		ls -lh $(OUTPUT_DIR)/$(APP).bin; \
+		if [ -f "$(BUILD_DIR)/$(APP)/$(APP).elf" ]; then \
+			echo ""; \
+			echo "ELF Info:"; \
+			xtensa-esp32s3-elf-size $(BUILD_DIR)/$(APP)/$(APP).elf; \
+		fi \
+	fi
+
+# Monitor serial output
+.PHONY: monitor
+monitor:
+	@echo "Monitoring serial port $(PORT)..."
+	idf.py -p $(PORT) monitor
+
+.PHONY: all
+all: all-apps

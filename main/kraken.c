@@ -27,14 +27,23 @@
 #include "bluetooth_service.h"
 #include "display_service.h"
 #include "network_service.h"
+#include "input_service.h"
 
-// App manager and example apps
+// App manager and dynamic loader
 #include "system_service/app_manager.h"
+#include "system_service/app_loader.h"
 #include "system_service/common_events.h"
+
+// Configuration: Choose app loading method
+// Set to 1 to load apps dynamically from partition (recommended)
+// Set to 0 to load apps as built-in (for testing/comparison)
+#define ENABLE_DYNAMIC_APP_LOADING 1
+
+#if !ENABLE_DYNAMIC_APP_LOADING
+// Only include app headers if loading statically
 #include "hello_app.h"
 #include "goodbye_app.h"
-// goodbye_app will be loaded dynamically from partition
-// #include "goodbye_app.h"
+#endif
 
 // Application tag for logging
 static const char *TAG = "kraken";
@@ -215,9 +224,63 @@ static void init_application_services(void)
     if (ret == ESP_OK) {
         network_service_start();
     }
+
+    // Initialize Input Service
+    ret = input_service_init();
+    if (ret == ESP_OK) {
+        input_service_start();
+    }
     
     ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "Registering built-in apps...");
+    ESP_LOGI(TAG, "Registering apps...");
+    
+#if ENABLE_DYNAMIC_APP_LOADING
+    // ========================================================================
+    // DYNAMIC APP LOADING (from flash partition)
+    // ========================================================================
+    ESP_LOGI(TAG, "Using DYNAMIC app loading from partition");
+    ESP_LOGI(TAG, "");
+    
+    // Note: Apps should be pre-built with build_pic_app.sh and flashed to partition
+    // Example:
+    //   ./build_pic_app.sh hello
+    //   make -f Makefile.apps flash-app APP=hello
+    //
+    // For now, we'll try to load from partition, but it's okay if it fails
+    // (partition might be empty on first boot)
+    
+    ESP_LOGI(TAG, "Attempting to load dynamic apps from 'app_store' partition...");
+    
+    // Try to load hello app from partition (offset 0)
+    app_info_t *hello_info = NULL;
+    ret = app_manager_load_dynamic_from_partition("app_store", 0, &hello_info);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "✓ Loaded 'hello' app dynamically from partition");
+    } else {
+        ESP_LOGW(TAG, "⚠ Failed to load hello app from partition: %s", esp_err_to_name(ret));
+        ESP_LOGI(TAG, "To load apps dynamically:");
+        ESP_LOGI(TAG, "  1. Build: ./build_pic_app.sh hello");
+        ESP_LOGI(TAG, "  2. Flash: make -f Makefile.apps flash-app APP=hello");
+    }
+    
+    // Try to load goodbye app from partition (offset 0x10000 = 64KB)
+    app_info_t *goodbye_info = NULL;
+    ret = app_manager_load_dynamic_from_partition("app_store", 0x10000, &goodbye_info);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "✓ Loaded 'goodbye' app dynamically from partition");
+    } else {
+        ESP_LOGW(TAG, "⚠ Failed to load goodbye app from partition: %s", esp_err_to_name(ret));
+        ESP_LOGI(TAG, "To load apps dynamically:");
+        ESP_LOGI(TAG, "  1. Build: ./build_pic_app.sh goodbye");
+        ESP_LOGI(TAG, "  2. Flash to offset 0x10000:");
+        ESP_LOGI(TAG, "     esptool.py write_flash <partition_addr+0x10000> build/app_binaries/goodbye.bin");
+    }
+    
+#else
+    // ========================================================================
+    // STATIC APP LOADING (built into firmware)
+    // ========================================================================
+    ESP_LOGI(TAG, "Using STATIC app loading (built-in)");
     
     // Register Hello App (built-in)
     app_info_t *hello_info = NULL;
@@ -232,6 +295,7 @@ static void init_application_services(void)
     if (ret == ESP_OK) {
         ESP_LOGI(TAG, "✓ Registered 'goodbye' app (built-in)");
     }
+#endif
     
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "✓ Application services initialized");
@@ -319,47 +383,77 @@ static void main_task(void *pvParameters)
     
     ESP_LOGI(TAG, "Main application task started");
     
-    // Wait a bit then start the hello app
+    // Wait a bit for system to stabilize
     vTaskDelay(pdMS_TO_TICKS(3000));
     
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "═══════════════════════════════════════");
-    ESP_LOGI(TAG, "Starting hello app (built-in)...");
+    ESP_LOGI(TAG, "Starting apps demonstration...");
     ESP_LOGI(TAG, "═══════════════════════════════════════");
-    app_manager_start_app("hello");
+    
+#if ENABLE_DYNAMIC_APP_LOADING
+    ESP_LOGI(TAG, "Mode: DYNAMIC APP LOADING");
+    ESP_LOGI(TAG, "Apps are loaded from flash partition");
+#else
+    ESP_LOGI(TAG, "Mode: STATIC APP LOADING");
+    ESP_LOGI(TAG, "Apps are built into firmware");
+#endif
+    
+    // List all registered apps
+    ESP_LOGI(TAG, "");
+    ESP_LOGI(TAG, "Listing all registered apps:");
+    app_info_t apps[APP_MAX_APPS];
+    size_t count;
+    if (app_manager_list_apps(apps, APP_MAX_APPS, &count) == ESP_OK) {
+        ESP_LOGI(TAG, "Found %zu apps:", count);
+        for (size_t i = 0; i < count; i++) {
+            ESP_LOGI(TAG, "  [%zu] %s v%s by %s",
+                     i,
+                     apps[i].manifest.name,
+                     apps[i].manifest.version,
+                     apps[i].manifest.author);
+            ESP_LOGI(TAG, "      State: %d, Source: %s, Dynamic: %s",
+                     apps[i].state,
+                     apps[i].source == APP_SOURCE_INTERNAL ? "Built-in" :
+                     apps[i].source == APP_SOURCE_STORAGE ? "Storage" : "Remote",
+                     apps[i].is_dynamic ? "Yes" : "No");
+            if (apps[i].is_dynamic) {
+                ESP_LOGI(TAG, "      Size: %lu bytes", apps[i].app_size);
+            }
+        }
+    }
+    
+    // Try to start hello app (if it exists)
+    ESP_LOGI(TAG, "");
+    ESP_LOGI(TAG, "═══════════════════════════════════════");
+    ESP_LOGI(TAG, "Starting 'hello' app...");
+    ESP_LOGI(TAG, "═══════════════════════════════════════");
+    esp_err_t ret = app_manager_start_app("hello");
+    if (ret != ESP_OK) {
+        // Try dynamic_app_0 (default name for dynamically loaded apps)
+        ret = app_manager_start_app("dynamic_app_0");
+    }
     
     // Wait for hello to finish
     vTaskDelay(pdMS_TO_TICKS(8000));
     
-    // Start goodbye app
+    // Try to start goodbye app (if it exists)
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "═══════════════════════════════════════");
-    ESP_LOGI(TAG, "Starting goodbye app...");
+    ESP_LOGI(TAG, "Starting 'goodbye' app...");
     ESP_LOGI(TAG, "═══════════════════════════════════════");
-    app_manager_start_app("goodbye");
+    ret = app_manager_start_app("goodbye");
+    if (ret != ESP_OK) {
+        // Try dynamic_app_1 (second dynamically loaded app)
+        ret = app_manager_start_app("dynamic_app_1");
+    }
     
     // Wait for goodbye to finish
     vTaskDelay(pdMS_TO_TICKS(8000));
     
-    // List all apps
+    // Main monitoring loop
     ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "═══════════════════════════════════════");
-    ESP_LOGI(TAG, "Listing all registered apps:");
-    ESP_LOGI(TAG, "═══════════════════════════════════════");
-    
-    app_info_t apps[APP_MAX_APPS];
-    size_t count;
-    if (app_manager_list_apps(apps, APP_MAX_APPS, &count) == ESP_OK) {
-        for (size_t i = 0; i < count; i++) {
-            ESP_LOGI(TAG, "[%d] %s v%s by %s - State: %d, Source: %d",
-                     i,
-                     apps[i].manifest.name,
-                     apps[i].manifest.version,
-                     apps[i].manifest.author,
-                     apps[i].state,
-                     apps[i].source);
-        }
-    }
+    ESP_LOGI(TAG, "Entering monitoring loop...");
     
     while (1) {
         loop_count++;

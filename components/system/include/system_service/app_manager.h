@@ -118,6 +118,19 @@ esp_err_t app_manager_list_apps(app_info_t *apps, size_t max_count, size_t *out_
 esp_err_t app_manager_get_running_apps(app_info_t *apps, size_t max_count, size_t *out_count);
 
 /**
+ * @brief Load and register a dynamic app from flash partition using ELF loader
+ * 
+ * This function loads a Position-Independent Code (PIC) app from a flash partition,
+ * parses the ELF binary, applies relocations, and registers it with the app manager.
+ * 
+ * @param partition_label Flash partition label (e.g., "app_store")
+ * @param offset Offset within partition where app ELF binary starts
+ * @param out_info Output pointer to app info (optional, can be NULL)
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t app_manager_load_dynamic_from_partition(const char *partition_label, size_t offset, app_info_t **out_info);
+
+/**
  * @brief Load app from flash partition using memory mapping
  * 
  * This function loads an app directly from flash and maps the code section
