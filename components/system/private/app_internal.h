@@ -2,7 +2,6 @@
 #define APP_INTERNAL_H
 
 #include "system_service/app_manager.h"
-#include "system_service/app_loader.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -18,7 +17,6 @@ typedef struct {
     bool registered;
     TaskHandle_t task_handle;
     app_context_t context;
-    loaded_app_t loaded_app;  // Dynamic app data (if is_dynamic == true)
 } app_registry_entry_t;
 
 typedef struct {
@@ -29,21 +27,9 @@ typedef struct {
 } app_registry_t;
 
 app_registry_t* app_get_registry(void);
-
 esp_err_t app_registry_lock(void);
-
 esp_err_t app_registry_unlock(void);
-
 app_registry_entry_t* app_find_by_name(const char *name);
-
-esp_err_t app_load_binary(const void *data, size_t size, app_info_t *info);
-
-esp_err_t app_verify_header(const app_header_t *header, size_t total_size);
-
-uint32_t app_calculate_crc32(const uint8_t *data, size_t size);
-
-// Flash-based dynamic loader
-esp_err_t flash_app_load(const char *partition_label, size_t offset, app_info_t *info);
 
 #ifdef __cplusplus
 }

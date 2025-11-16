@@ -88,33 +88,21 @@ struct app_context {
     esp_err_t (*register_event_type)(const char *name, system_event_type_t *out_type);
 };
 
+// App manager initialization
 esp_err_t app_manager_init(void);
 
+// Register a statically-linked app
 esp_err_t app_manager_register_app(const app_manifest_t *manifest, app_info_t **out_info);
 
-esp_err_t app_manager_load_from_storage(const char *path, app_info_t **out_info);
-
-esp_err_t app_manager_load_from_partition(const char *partition_label, size_t offset, app_info_t **out_info);
-
-esp_err_t app_manager_load_from_url(const char *url, app_info_t **out_info);
-
-esp_err_t app_manager_install(const void *app_data, size_t size, 
-                              const char *install_path, app_info_t **out_info);
-
-esp_err_t app_manager_uninstall(const char *app_name);
-
+// App lifecycle  
 esp_err_t app_manager_start_app(const char *app_name);
-
 esp_err_t app_manager_stop_app(const char *app_name);
-
 esp_err_t app_manager_pause_app(const char *app_name);
-
 esp_err_t app_manager_resume_app(const char *app_name);
 
+// App information
 esp_err_t app_manager_get_info(const char *app_name, app_info_t *out_info);
-
 esp_err_t app_manager_list_apps(app_info_t *apps, size_t max_count, size_t *out_count);
-
 esp_err_t app_manager_get_running_apps(app_info_t *apps, size_t max_count, size_t *out_count);
 
 /**

@@ -5,4 +5,6 @@ idf_component_register(
         "include"
     REQUIRES
         system
+        bt
+        nvs_flash
 )

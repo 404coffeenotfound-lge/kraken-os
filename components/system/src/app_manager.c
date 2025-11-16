@@ -1,12 +1,9 @@
 #include "system_service/app_manager.h"
 #include "system_service/service_manager.h"
 #include "system_service/event_bus.h"
-#include "system_service/app_storage.h"
-#include "system_service/app_loader.h"
 #include "app_internal.h"
 #include "esp_log.h"
 #include "esp_timer.h"
-#include "esp_partition.h"
 #include <string.h>
 
 static const char *TAG = "app_manager";
@@ -98,16 +95,9 @@ esp_err_t app_manager_init(void)
         return ESP_ERR_NO_MEM;
     }
     
-    // Initialize the dynamic app loader
-    esp_err_t ret = app_loader_init();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize app loader");
-        return ret;
-    }
-    
     g_app_registry.initialized = true;
     
-    ESP_LOGI(TAG, "✓ App manager initialized");
+    ESP_LOGI(TAG, "✓ App manager initialized (static apps only)");
     
     return ESP_OK;
 }
@@ -373,51 +363,6 @@ esp_err_t app_manager_resume_app(const char *app_name)
     return ESP_OK;
 }
 
-esp_err_t app_manager_uninstall(const char *app_name)
-{
-    if (app_name == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    
-    esp_err_t ret = app_registry_lock();
-    if (ret != ESP_OK) {
-        return ret;
-    }
-    
-    app_registry_entry_t *entry = app_find_by_name(app_name);
-    if (entry == NULL) {
-        app_registry_unlock();
-        return ESP_ERR_NOT_FOUND;
-    }
-    
-    // Stop if running
-    if (entry->info.state == APP_STATE_RUNNING || entry->info.state == APP_STATE_PAUSED) {
-        app_registry_unlock();
-        app_manager_stop_app(app_name);
-        ret = app_registry_lock();
-        if (ret != ESP_OK) {
-            return ret;
-        }
-    }
-    
-    // Unregister from system
-    system_service_unregister(entry->info.service_id);
-    
-    // Free dynamic memory if allocated
-    if (entry->info.is_dynamic && entry->info.app_data != NULL) {
-        free(entry->info.app_data);
-    }
-    
-    // Clear entry
-    memset(entry, 0, sizeof(app_registry_entry_t));
-    g_app_registry.count--;
-    
-    app_registry_unlock();
-    
-    ESP_LOGI(TAG, "✓ Uninstalled app '%s'", app_name);
-    
-    return ESP_OK;
-}
 
 esp_err_t app_manager_get_info(const char *app_name, app_info_t *out_info)
 {
@@ -496,291 +441,10 @@ esp_err_t app_manager_get_running_apps(app_info_t *apps, size_t max_count, size_
     return ESP_OK;
 }
 
-// Placeholder for future implementation
-esp_err_t app_manager_load_from_storage(const char *path, app_info_t **out_info)
-{
-    if (path == NULL || out_info == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    
-    ESP_LOGI(TAG, "Loading app from storage: %s", path);
-    
-    // Extract app name from path (e.g., "/storage/apps/goodbye.bin" -> "goodbye")
-    const char *filename = strrchr(path, '/');
-    if (filename == NULL) {
-        filename = path;
-    } else {
-        filename++; // Skip the '/'
-    }
-    
-    // Remove .bin extension if present
-    char app_name[64];
-    strncpy(app_name, filename, sizeof(app_name) - 1);
-    app_name[sizeof(app_name) - 1] = '\0';
-    
-    char *dot = strrchr(app_name, '.');
-    if (dot != NULL && strcmp(dot, ".bin") == 0) {
-        *dot = '\0';
-    }
-    
-    // Read the app binary from storage
-    void *app_data = NULL;
-    size_t app_size = 0;
-    
-    // Load from file system using app_storage (expects app name, not full path)
-    esp_err_t ret = app_storage_load(app_name, &app_data, &app_size);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to load app '%s' from storage: %s", app_name, esp_err_to_name(ret));
-        return ret;
-    }
-    
-    ESP_LOGI(TAG, "✓ Read %zu bytes from storage", app_size);
-    
-    // Get registry and lock
-    app_registry_t *registry = app_get_registry();
-    ret = app_registry_lock();
-    if (ret != ESP_OK) {
-        free(app_data);
-        return ret;
-    }
-    
-    // Find a free slot
-    int slot = -1;
-    for (int i = 0; i < APP_REGISTRY_MAX_ENTRIES; i++) {
-        if (!registry->entries[i].registered) {
-            slot = i;
-            break;
-        }
-    }
-    
-    if (slot == -1) {
-        app_registry_unlock();
-        free(app_data);
-        ESP_LOGE(TAG, "Maximum number of apps reached");
-        return ESP_ERR_NO_MEM;
-    }
-    
-    // Load the binary into app_info
-    app_info_t *info = &registry->entries[slot].info;
-    ret = app_load_binary(app_data, app_size, info);
-    free(app_data);  // Free the temporary buffer
-    
-    if (ret != ESP_OK) {
-        app_registry_unlock();
-        return ret;
-    }
-    
-    // Set source type and mark as dynamic
-    info->source = APP_SOURCE_STORAGE;
-    info->is_dynamic = true;
-    
-    // Mark as registered
-    registry->entries[slot].registered = true;
-    registry->count++;
-    
-    app_registry_unlock();
-    
-    *out_info = info;
-    
-    ESP_LOGI(TAG, "✓ Successfully loaded app '%s' from storage", info->manifest.name);
-    
-    return ESP_OK;
-}
 
-esp_err_t app_manager_load_from_partition(const char *partition_label, size_t offset, app_info_t **out_info)
-{
-    if (partition_label == NULL || out_info == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    
-    ESP_LOGI(TAG, "Loading app from partition '%s' at offset 0x%zx", partition_label, offset);
-    
-    // Get registry and lock
-    app_registry_t *registry = app_get_registry();
-    esp_err_t ret = app_registry_lock();
-    if (ret != ESP_OK) {
-        return ret;
-    }
-    
-    // Find a free slot
-    int slot = -1;
-    for (int i = 0; i < APP_REGISTRY_MAX_ENTRIES; i++) {
-        if (!registry->entries[i].registered) {
-            slot = i;
-            break;
-        }
-    }
-    
-    if (slot == -1) {
-        app_registry_unlock();
-        ESP_LOGE(TAG, "Maximum number of apps reached");
-        return ESP_ERR_NO_MEM;
-    }
-    
-    // Use flash loader to map app from flash
-    app_info_t *info = &registry->entries[slot].info;
-    ret = flash_app_load(partition_label, offset, info);
-    
-    if (ret != ESP_OK) {
-        app_registry_unlock();
-        ESP_LOGE(TAG, "Failed to load app from flash: %s", esp_err_to_name(ret));
-        return ret;
-    }
-    
-    // Mark as registered
-    registry->entries[slot].registered = true;
-    registry->count++;
-    
-    app_registry_unlock();
-    
-    *out_info = info;
-    
-    ESP_LOGI(TAG, "✓ Successfully loaded app '%s' from partition (flash-mapped)", info->manifest.name);
-    
-    return ESP_OK;
-}
-
-esp_err_t app_manager_load_from_url(const char *url, app_info_t **out_info)
-{
-    ESP_LOGI(TAG, "Load from URL: %s (not yet implemented)", url);
-    return ESP_ERR_NOT_SUPPORTED;
-}
 
 /**
  * @brief Load and register a dynamic app from flash partition using ELF loader
  */
-esp_err_t app_manager_load_dynamic_from_partition(const char *partition_label, size_t offset, app_info_t **out_info)
-{
-    if (partition_label == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    
-    ESP_LOGI(TAG, "Loading dynamic app from partition '%s' at offset %zu", partition_label, offset);
-    
-    esp_err_t ret = app_registry_lock();
-    if (ret != ESP_OK) {
-        return ret;
-    }
-    
-    // Find free slot
-    int slot = -1;
-    for (int i = 0; i < APP_REGISTRY_MAX_ENTRIES; i++) {
-        if (!g_app_registry.entries[i].registered) {
-            slot = i;
-            break;
-        }
-    }
-    
-    if (slot == -1) {
-        ESP_LOGE(TAG, "Maximum apps reached");
-        app_registry_unlock();
-        return ESP_ERR_NO_MEM;
-    }
-    
-    app_registry_entry_t *entry = &g_app_registry.entries[slot];
-    
-    // Load the app binary using the dynamic loader
-    ret = app_loader_load_from_partition(partition_label, offset, &entry->loaded_app);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to load app from partition");
-        app_registry_unlock();
-        return ret;
-    }
-    
-    // Create manifest from loaded app
-    // The entry point should be at the loaded code segment
-    app_entry_fn_t entry_fn = (app_entry_fn_t)entry->loaded_app.entry_point;
-    app_exit_fn_t exit_fn = (app_exit_fn_t)entry->loaded_app.exit_point;
-    
-    // Try to use the manifest from the app if available
-    if (entry->loaded_app.manifest_ptr != NULL) {
-        // Copy manifest from loaded app
-        const app_manifest_t *loaded_manifest = (const app_manifest_t*)entry->loaded_app.manifest_ptr;
-        
-        // Copy the string fields only, not function pointers
-        strncpy(entry->info.manifest.name, loaded_manifest->name, APP_MAX_NAME_LEN - 1);
-        entry->info.manifest.name[APP_MAX_NAME_LEN - 1] = '\0';
-        
-        strncpy(entry->info.manifest.version, loaded_manifest->version, APP_MAX_VERSION_LEN - 1);
-        entry->info.manifest.version[APP_MAX_VERSION_LEN - 1] = '\0';
-        
-        strncpy(entry->info.manifest.author, loaded_manifest->author, APP_MAX_AUTHOR_LEN - 1);
-        entry->info.manifest.author[APP_MAX_AUTHOR_LEN - 1] = '\0';
-        
-        // Use entry/exit from loader (already relocated), not from manifest
-        entry->info.manifest.entry = entry_fn;
-        entry->info.manifest.exit = exit_fn;
-        entry->info.manifest.user_data = NULL;
-        
-        ESP_LOGI(TAG, "Using app manifest from ELF:");
-        ESP_LOGI(TAG, "  Name:    %s", entry->info.manifest.name);
-        ESP_LOGI(TAG, "  Version: %s", entry->info.manifest.version);
-        ESP_LOGI(TAG, "  Author:  %s", entry->info.manifest.author);
-    } else {
-        // Fallback to default naming if no manifest found
-        snprintf(entry->info.manifest.name, APP_MAX_NAME_LEN, "dynamic_app_%d", slot);
-        snprintf(entry->info.manifest.version, APP_MAX_VERSION_LEN, "1.0.0");
-        snprintf(entry->info.manifest.author, APP_MAX_AUTHOR_LEN, "Unknown");
-        entry->info.manifest.entry = entry_fn;
-        entry->info.manifest.exit = exit_fn;
-        entry->info.manifest.user_data = NULL;
-        ESP_LOGW(TAG, "No manifest found in ELF, using defaults");
-    }
-    
-    // Set app info
-    entry->info.state = APP_STATE_LOADED;
-    entry->info.source = APP_SOURCE_STORAGE;
-    entry->info.is_dynamic = true;
-    entry->info.load_time = (uint32_t)(esp_timer_get_time() / 1000000);
-    entry->info.app_size = entry->loaded_app.code_size + entry->loaded_app.data_size + entry->loaded_app.bss_size;
-    
-    // Setup context with system API access
-    entry->context.app_info = &entry->info;
-    entry->context.service_id = entry->info.service_id;
-    
-    // Provide system API table to the dynamic app
-    entry->context.register_service = system_service_register;
-    entry->context.unregister_service = system_service_unregister;
-    entry->context.set_state = system_service_set_state;
-    entry->context.heartbeat = system_service_heartbeat;
-    
-    entry->context.post_event = system_event_post;
-    entry->context.subscribe_event = system_event_subscribe;
-    entry->context.unsubscribe_event = system_event_unsubscribe;
-    entry->context.register_event_type = system_event_register_type;
-    
-    // Register with system service
-    ret = system_service_register(entry->info.manifest.name, entry, &entry->info.service_id);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to register dynamic app with system");
-        app_loader_unload(&entry->loaded_app);
-        app_registry_unlock();
-        return ret;
-    }
-    
-    entry->context.service_id = entry->info.service_id;
-    entry->registered = true;
-    g_app_registry.count++;
-    
-    if (out_info != NULL) {
-        *out_info = &entry->info;
-    }
-    
-    app_registry_unlock();
-    
-    ESP_LOGI(TAG, "✓ Loaded dynamic app '%s' from partition", entry->info.manifest.name);
-    ESP_LOGI(TAG, "  Code:  %zu bytes at %p", entry->loaded_app.code_size, entry->loaded_app.code_segment);
-    ESP_LOGI(TAG, "  Data:  %zu bytes at %p", entry->loaded_app.data_size, entry->loaded_app.data_segment);
-    ESP_LOGI(TAG, "  BSS:   %zu bytes at %p", entry->loaded_app.bss_size, entry->loaded_app.bss_segment);
-    ESP_LOGI(TAG, "  Entry: %p", entry->loaded_app.entry_point);
-    
-    return ESP_OK;
-}
 
 
-esp_err_t app_manager_install(const void *app_data, size_t size, 
-                              const char *install_path, app_info_t **out_info)
-{
-    ESP_LOGI(TAG, "Install to: %s (not yet implemented)", install_path);
-    return ESP_ERR_NOT_SUPPORTED;
-}

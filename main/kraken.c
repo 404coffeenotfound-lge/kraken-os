@@ -14,6 +14,7 @@
 #include "esp_timer.h"
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
+#include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -31,19 +32,15 @@
 
 // App manager and dynamic loader
 #include "system_service/app_manager.h"
-#include "system_service/app_loader.h"
 #include "system_service/common_events.h"
 
-// Configuration: Choose app loading method
-// Set to 1 to load apps dynamically from partition (recommended)
-// Set to 0 to load apps as built-in (for testing/comparison)
-#define ENABLE_DYNAMIC_APP_LOADING 1
+// Configuration: Static app loading only
+// Apps are built into firmware
+#undef ENABLE_DYNAMIC_APP_LOADING
 
-#if !ENABLE_DYNAMIC_APP_LOADING
-// Only include app headers if loading statically
+// Static app headers
 #include "hello_app.h"
 #include "goodbye_app.h"
-#endif
 
 // Application tag for logging
 static const char *TAG = "kraken";
@@ -233,69 +230,24 @@ static void init_application_services(void)
     
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "Registering apps...");
-    
-#if ENABLE_DYNAMIC_APP_LOADING
-    // ========================================================================
-    // DYNAMIC APP LOADING (from flash partition)
-    // ========================================================================
-    ESP_LOGI(TAG, "Using DYNAMIC app loading from partition");
+    ESP_LOGI(TAG, "Using STATIC app loading (built into firmware)");
     ESP_LOGI(TAG, "");
     
-    // Note: Apps should be pre-built with build_pic_app.sh and flashed to partition
-    // Example:
-    //   ./build_pic_app.sh hello
-    //   make -f Makefile.apps flash-app APP=hello
-    //
-    // For now, we'll try to load from partition, but it's okay if it fails
-    // (partition might be empty on first boot)
-    
-    ESP_LOGI(TAG, "Attempting to load dynamic apps from 'app_store' partition...");
-    
-    // Try to load hello app from partition (offset 0)
-    app_info_t *hello_info = NULL;
-    ret = app_manager_load_dynamic_from_partition("app_store", 0, &hello_info);
+    // Register hello app
+    ret = app_manager_register_app(&hello_app_manifest, NULL);
     if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "✓ Loaded 'hello' app dynamically from partition");
+        ESP_LOGI(TAG, "✓ Registered 'hello' app");
     } else {
-        ESP_LOGW(TAG, "⚠ Failed to load hello app from partition: %s", esp_err_to_name(ret));
-        ESP_LOGI(TAG, "To load apps dynamically:");
-        ESP_LOGI(TAG, "  1. Build: ./build_pic_app.sh hello");
-        ESP_LOGI(TAG, "  2. Flash: make -f Makefile.apps flash-app APP=hello");
+        ESP_LOGE(TAG, "✗ Failed to register 'hello' app: %s", esp_err_to_name(ret));
     }
     
-    // Try to load goodbye app from partition (offset 0x10000 = 64KB)
-    app_info_t *goodbye_info = NULL;
-    ret = app_manager_load_dynamic_from_partition("app_store", 0x10000, &goodbye_info);
+    // Register goodbye app
+    ret = app_manager_register_app(&goodbye_app_manifest, NULL);
     if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "✓ Loaded 'goodbye' app dynamically from partition");
+        ESP_LOGI(TAG, "✓ Registered 'goodbye' app");
     } else {
-        ESP_LOGW(TAG, "⚠ Failed to load goodbye app from partition: %s", esp_err_to_name(ret));
-        ESP_LOGI(TAG, "To load apps dynamically:");
-        ESP_LOGI(TAG, "  1. Build: ./build_pic_app.sh goodbye");
-        ESP_LOGI(TAG, "  2. Flash to offset 0x10000:");
-        ESP_LOGI(TAG, "     esptool.py write_flash <partition_addr+0x10000> build/app_binaries/goodbye.bin");
+        ESP_LOGE(TAG, "✗ Failed to register 'goodbye' app: %s", esp_err_to_name(ret));
     }
-    
-#else
-    // ========================================================================
-    // STATIC APP LOADING (built into firmware)
-    // ========================================================================
-    ESP_LOGI(TAG, "Using STATIC app loading (built-in)");
-    
-    // Register Hello App (built-in)
-    app_info_t *hello_info = NULL;
-    ret = app_manager_register_app(&hello_app_manifest, &hello_info);
-    if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "✓ Registered 'hello' app (built-in)");
-    }
-    
-    // Register Goodbye App (built-in)
-    app_info_t *goodbye_info = NULL;
-    ret = app_manager_register_app(&goodbye_app_manifest, &goodbye_info);
-    if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "✓ Registered 'goodbye' app (built-in)");
-    }
-#endif
     
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "✓ Application services initialized");
@@ -390,14 +342,8 @@ static void main_task(void *pvParameters)
     ESP_LOGI(TAG, "═══════════════════════════════════════");
     ESP_LOGI(TAG, "Starting apps demonstration...");
     ESP_LOGI(TAG, "═══════════════════════════════════════");
-    
-#if ENABLE_DYNAMIC_APP_LOADING
-    ESP_LOGI(TAG, "Mode: DYNAMIC APP LOADING");
-    ESP_LOGI(TAG, "Apps are loaded from flash partition");
-#else
     ESP_LOGI(TAG, "Mode: STATIC APP LOADING");
     ESP_LOGI(TAG, "Apps are built into firmware");
-#endif
     
     // List all registered apps
     ESP_LOGI(TAG, "");
@@ -429,10 +375,6 @@ static void main_task(void *pvParameters)
     ESP_LOGI(TAG, "Starting 'hello' app...");
     ESP_LOGI(TAG, "═══════════════════════════════════════");
     esp_err_t ret = app_manager_start_app("hello");
-    if (ret != ESP_OK) {
-        // Try dynamic_app_0 (default name for dynamically loaded apps)
-        ret = app_manager_start_app("dynamic_app_0");
-    }
     
     // Wait for hello to finish
     vTaskDelay(pdMS_TO_TICKS(8000));
@@ -443,10 +385,6 @@ static void main_task(void *pvParameters)
     ESP_LOGI(TAG, "Starting 'goodbye' app...");
     ESP_LOGI(TAG, "═══════════════════════════════════════");
     ret = app_manager_start_app("goodbye");
-    if (ret != ESP_OK) {
-        // Try dynamic_app_1 (second dynamically loaded app)
-        ret = app_manager_start_app("dynamic_app_1");
-    }
     
     // Wait for goodbye to finish
     vTaskDelay(pdMS_TO_TICKS(8000));
@@ -479,6 +417,21 @@ static void main_task(void *pvParameters)
 void app_main(void)
 {
     esp_err_t ret;
+    
+    // ========================================================================
+    // STEP 0: Initialize NVS (REQUIRED for Bluetooth and WiFi)
+    // ========================================================================
+    ESP_LOGI(TAG, "Initializing NVS...");
+    ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        // NVS partition was truncated and needs to be erased
+        ESP_LOGW(TAG, "NVS partition needs to be erased");
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+    ESP_LOGI(TAG, "✓ NVS initialized");
+    ESP_LOGI(TAG, "");
     
     // Print system information
     print_system_info();

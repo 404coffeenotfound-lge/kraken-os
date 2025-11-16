@@ -36,23 +36,18 @@ typedef struct {
     bt_device_info_t device;
 } bt_data_event_t;
 
+// Core service functions
 esp_err_t bluetooth_service_init(void);
-
 esp_err_t bluetooth_service_deinit(void);
-
 esp_err_t bluetooth_service_start(void);
-
 esp_err_t bluetooth_service_stop(void);
 
-esp_err_t bluetooth_scan_start(void);
-
-esp_err_t bluetooth_scan_stop(void);
-
-esp_err_t bluetooth_connect(const uint8_t *address);
-
-esp_err_t bluetooth_disconnect(void);
-
+// Service information
 system_service_id_t bluetooth_service_get_id(void);
+bool bluetooth_service_is_connected(void);
+
+// Data transfer
+esp_err_t bluetooth_service_send_notification(const uint8_t *data, uint16_t len);
 
 #ifdef __cplusplus
 }
