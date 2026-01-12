@@ -2,6 +2,8 @@
 #include "system_service/system_service.h"
 #include "system_service/service_manager.h"
 #include "system_service/event_bus.h"
+#include "service_watchdog.h"
+#include "resource_quota.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -54,6 +56,26 @@ esp_err_t audio_service_init(void)
     
     ESP_LOGI(TAG, "✓ Registered %d event types", 6);
     
+    // Register with watchdog
+    service_watchdog_config_t watchdog_config = {
+        .timeout_ms = 30000,              // 30 second timeout
+        .auto_restart = true,             // Auto-restart on failure
+        .max_restart_attempts = 3,        // Max 3 restart attempts
+        .is_critical = false              // Not a critical service
+    };
+    watchdog_register_service(audio_service_id, &watchdog_config);
+    ESP_LOGI(TAG, "✓ Registered with watchdog (30s timeout)");
+    
+    // Set resource quotas
+    service_quota_t quota = {
+        .max_events_per_sec = 50,         // Max 50 events/sec
+        .max_subscriptions = 8,           // Max 8 subscriptions
+        .max_event_data_size = 256,       // Max 256 bytes per event
+        .max_memory_bytes = 32 * 1024     // Max 32KB memory
+    };
+    quota_set(audio_service_id, &quota);
+    ESP_LOGI(TAG, "✓ Resource quotas set (50 events/s, 32KB memory)");
+    
     // Set service state
     system_service_set_state(audio_service_id, SYSTEM_SERVICE_STATE_REGISTERED);
     
@@ -102,6 +124,9 @@ esp_err_t audio_service_start(void)
                      audio_events[AUDIO_EVENT_STARTED],
                      NULL, 0,
                      SYSTEM_EVENT_PRIORITY_NORMAL);
+    
+    // Send heartbeat to watchdog
+    system_service_heartbeat(audio_service_id);
     
     ESP_LOGI(TAG, "✓ Audio service started");
     ESP_LOGI(TAG, "  → Posted AUDIO_EVENT_STARTED");

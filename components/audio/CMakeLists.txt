@@ -3,6 +3,8 @@ idf_component_register(
         "src/audio_service.c"
     INCLUDE_DIRS 
         "include"
+    PRIV_INCLUDE_DIRS 
+        "../system/private"
     REQUIRES
         system
 )
