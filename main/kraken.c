@@ -22,6 +22,15 @@
 #include "system_service/system_service.h"
 #include "system_service/service_manager.h"
 #include "system_service/event_bus.h"
+#include "system_service/memory_utils.h"
+
+// Production feature headers
+#include "memory_pool.h"
+#include "service_watchdog.h"
+#include "resource_quota.h"
+#include "service_dependencies.h"
+#include "heap_monitor.h"
+#include "log_control.h"
 
 // Application service headers
 #include "audio_service.h"
@@ -144,7 +153,10 @@ static esp_err_t init_system_service(void)
     }
     
     ESP_LOGI(TAG, "✓ System service started");
-    ESP_LOGI(TAG, "  Event processing task running");
+    ESP_LOGI(TAG, "  Event processing: Priority-based");
+    ESP_LOGI(TAG, "  Handler monitoring: Active");
+    ESP_LOGI(TAG, "  Watchdog monitoring: Active");
+    ESP_LOGI(TAG, "  Heap monitoring: Active");
     
     return ESP_OK;
 }

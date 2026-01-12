@@ -2,17 +2,16 @@
 #define SYSTEM_INTERNAL_H
 
 #include "system_service/system_types.h"
+#include "priority_queue.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
-#include "freertos/queue.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #define SYSTEM_MAGIC_NUMBER           0x53595354
-#define SYSTEM_EVENT_QUEUE_SIZE       32
-#define SYSTEM_MAX_DATA_SIZE          512
+#define SYSTEM_SERVICE_MUTEX_TIMEOUT_MS 1000
 
 typedef struct {
     system_event_type_t event_type;
@@ -52,7 +51,7 @@ typedef struct {
     event_subscription_t subscriptions[SYSTEM_SERVICE_MAX_SUBSCRIBERS];
     uint16_t subscription_count;
     
-    QueueHandle_t event_queue;
+    priority_queue_handle_t event_queue;  // Changed from QueueHandle_t
     SemaphoreHandle_t mutex;
     TaskHandle_t event_task;
     

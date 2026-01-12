@@ -2,6 +2,8 @@
 #include "system_service/system_service.h"
 #include "system_service/service_manager.h"
 #include "system_service/event_bus.h"
+#include "service_watchdog.h"
+#include "resource_quota.h"
 #include "esp_log.h"
 #include "esp_bt.h"
 #include "esp_bt_main.h"
@@ -229,6 +231,9 @@ static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_
         conn_id = param->connect.conn_id;
         is_connected = true;
         
+        // Send heartbeat on connection
+        system_service_heartbeat(bt_service_id);
+        
         // Post connection event
         bt_connection_event_t event_data = {
             .connected = true
@@ -364,6 +369,26 @@ esp_err_t bluetooth_service_init(void)
     
     ESP_LOGI(TAG, "✓ Registered %d event types", 8);
     
+    // Register with watchdog
+    service_watchdog_config_t watchdog_config = {
+        .timeout_ms = 45000,              // 45 second timeout (BT operations can be slow)
+        .auto_restart = true,             // Auto-restart on failure
+        .max_restart_attempts = 2,        // Max 2 restart attempts
+        .is_critical = false              // Not a critical service
+    };
+    watchdog_register_service(bt_service_id, &watchdog_config);
+    ESP_LOGI(TAG, "✓ Registered with watchdog (45s timeout)");
+    
+    // Set resource quotas
+    service_quota_t quota = {
+        .max_events_per_sec = 30,         // Max 30 events/sec
+        .max_subscriptions = 12,          // Max 12 subscriptions
+        .max_event_data_size = 512,       // Max 512 bytes per event
+        .max_memory_bytes = 128 * 1024    // Max 128KB memory
+    };
+    quota_set(bt_service_id, &quota);
+    ESP_LOGI(TAG, "✓ Resource quotas set (30 events/s, 128KB memory)");
+    
     // Initialize Bluetooth controller
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
     ret = esp_bt_controller_init(&bt_cfg);
@@ -493,6 +518,9 @@ esp_err_t bluetooth_service_start(void)
                      bt_events[BT_EVENT_STARTED],
                      NULL, 0,
                      SYSTEM_EVENT_PRIORITY_NORMAL);
+    
+    // Send heartbeat to watchdog
+    system_service_heartbeat(bt_service_id);
     
     ESP_LOGI(TAG, "✓ Bluetooth service started");
     ESP_LOGI(TAG, "  → Posted BT_EVENT_STARTED");

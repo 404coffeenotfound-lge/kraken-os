@@ -7,6 +7,18 @@ idf_component_register(
         "src/app_manager.c"
         "src/memory_utils.c"
         "src/common_events.c"
+        "src/error_codes.c"
+        "src/memory_pool.c"
+        "src/service_watchdog.c"
+        "src/priority_queue.c"
+        "src/resource_quota.c"
+        "src/service_dependencies.c"
+        "src/handler_monitor.c"
+        "src/app_lifecycle.c"
+        "src/heap_monitor.c"
+        "src/request_response.c"
+        "src/log_control.c"
+        "src/app_context_refcount.c"
     INCLUDE_DIRS 
         "include"
     PRIV_INCLUDE_DIRS

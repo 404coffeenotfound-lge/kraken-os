@@ -56,4 +56,205 @@ menu "System Service Configuration"
         help
             Time in milliseconds before a service is considered unresponsive.
 
+    menu "Watchdog Configuration"
+        
+        config SYSTEM_SERVICE_ENABLE_WATCHDOG
+            bool "Enable service watchdog"
+            default y
+            help
+                Enable watchdog monitoring for service health.
+        
+        config SYSTEM_SERVICE_WATCHDOG_TASK_PRIORITY
+            int "Watchdog task priority"
+            default 10
+            range 1 24
+            depends on SYSTEM_SERVICE_ENABLE_WATCHDOG
+            help
+                FreeRTOS task priority for watchdog monitoring.
+        
+        config SYSTEM_SERVICE_WATCHDOG_CHECK_INTERVAL_MS
+            int "Watchdog check interval (ms)"
+            default 5000
+            range 1000 60000
+            depends on SYSTEM_SERVICE_ENABLE_WATCHDOG
+            help
+                How often the watchdog checks service heartbeats.
+        
+        config SYSTEM_SERVICE_WATCHDOG_AUTO_RESTART
+            bool "Auto-restart failed services"
+            default y
+            depends on SYSTEM_SERVICE_ENABLE_WATCHDOG
+            help
+                Automatically restart services that timeout.
+        
+        config SYSTEM_SERVICE_WATCHDOG_MAX_RESTARTS
+            int "Maximum restart attempts"
+            default 3
+            range 0 10
+            depends on SYSTEM_SERVICE_WATCHDOG_AUTO_RESTART
+            help
+                Maximum number of restart attempts before giving up.
+    
+    endmenu
+
+    menu "Event Handler Monitoring"
+        
+        config SYSTEM_SERVICE_ENABLE_HANDLER_MONITORING
+            bool "Enable event handler monitoring"
+            default y
+            help
+                Monitor event handler execution time.
+        
+        config SYSTEM_SERVICE_HANDLER_WARN_THRESHOLD_MS
+            int "Handler warning threshold (ms)"
+            default 50
+            range 10 1000
+            depends on SYSTEM_SERVICE_ENABLE_HANDLER_MONITORING
+            help
+                Log warning if handler exceeds this time.
+        
+        config SYSTEM_SERVICE_HANDLER_TIMEOUT_MS
+            int "Handler timeout (ms, 0=disabled)"
+            default 0
+            range 0 5000
+            depends on SYSTEM_SERVICE_ENABLE_HANDLER_MONITORING
+            help
+                Force return if handler exceeds this time (0=disabled).
+    
+    endmenu
+
+    menu "Resource Quotas"
+        
+        config SYSTEM_SERVICE_ENABLE_QUOTAS
+            bool "Enable resource quotas"
+            default y
+            help
+                Enable per-service resource quota enforcement.
+        
+        config SYSTEM_SERVICE_DEFAULT_EVENT_QUOTA_PER_SEC
+            int "Default events per second quota"
+            default 100
+            range 10 10000
+            depends on SYSTEM_SERVICE_ENABLE_QUOTAS
+            help
+                Default maximum events a service can post per second.
+        
+        config SYSTEM_SERVICE_DEFAULT_SUBSCRIPTION_QUOTA
+            int "Default subscription quota"
+            default 16
+            range 1 64
+            depends on SYSTEM_SERVICE_ENABLE_QUOTAS
+            help
+                Default maximum subscriptions per service.
+        
+        config SYSTEM_SERVICE_DEFAULT_MEMORY_QUOTA_KB
+            int "Default memory quota (KB)"
+            default 64
+            range 4 1024
+            depends on SYSTEM_SERVICE_ENABLE_QUOTAS
+            help
+                Default maximum memory allocation per service.
+    
+    endmenu
+
+    menu "Memory Pool Configuration"
+        
+        config SYSTEM_SERVICE_ENABLE_MEMORY_POOLS
+            bool "Enable memory pools for events"
+            default y
+            help
+                Use pre-allocated memory pools to reduce fragmentation.
+        
+        config SYSTEM_SERVICE_POOL_SIZE_64
+            int "Pool size for 64-byte blocks"
+            default 16
+            range 0 64
+            depends on SYSTEM_SERVICE_ENABLE_MEMORY_POOLS
+            help
+                Number of 64-byte blocks in memory pool.
+        
+        config SYSTEM_SERVICE_POOL_SIZE_128
+            int "Pool size for 128-byte blocks"
+            default 16
+            range 0 64
+            depends on SYSTEM_SERVICE_ENABLE_MEMORY_POOLS
+            help
+                Number of 128-byte blocks in memory pool.
+        
+        config SYSTEM_SERVICE_POOL_SIZE_256
+            int "Pool size for 256-byte blocks"
+            default 8
+            range 0 32
+            depends on SYSTEM_SERVICE_ENABLE_MEMORY_POOLS
+            help
+                Number of 256-byte blocks in memory pool.
+        
+        config SYSTEM_SERVICE_POOL_SIZE_512
+            int "Pool size for 512-byte blocks"
+            default 8
+            range 0 32
+            depends on SYSTEM_SERVICE_ENABLE_MEMORY_POOLS
+            help
+                Number of 512-byte blocks in memory pool.
+    
+    endmenu
+
+    menu "Performance & Metrics"
+        
+        config SYSTEM_SERVICE_ENABLE_METRICS
+            bool "Enable performance metrics"
+            default y
+            help
+                Track and report performance metrics.
+        
+        config SYSTEM_SERVICE_ENABLE_LATENCY_TRACKING
+            bool "Enable event latency tracking"
+            default y
+            depends on SYSTEM_SERVICE_ENABLE_METRICS
+            help
+                Track event processing latency.
+        
+        config SYSTEM_SERVICE_ENABLE_QUEUE_STATS
+            bool "Enable queue statistics"
+            default y
+            depends on SYSTEM_SERVICE_ENABLE_METRICS
+            help
+                Track event queue depth and overflow statistics.
+    
+    endmenu
+
+    menu "Priority Queue Configuration"
+        
+        config SYSTEM_SERVICE_ENABLE_PRIORITY_QUEUES
+            bool "Enable priority-based event queues"
+            default y
+            help
+                Use separate queues for different priority levels.
+        
+        config SYSTEM_SERVICE_HIGH_PRIORITY_QUEUE_SIZE
+            int "High priority queue size"
+            default 16
+            range 4 128
+            depends on SYSTEM_SERVICE_ENABLE_PRIORITY_QUEUES
+            help
+                Size of high priority event queue.
+        
+        config SYSTEM_SERVICE_NORMAL_PRIORITY_QUEUE_SIZE
+            int "Normal priority queue size"
+            default 32
+            range 4 128
+            depends on SYSTEM_SERVICE_ENABLE_PRIORITY_QUEUES
+            help
+                Size of normal priority event queue.
+        
+        config SYSTEM_SERVICE_LOW_PRIORITY_QUEUE_SIZE
+            int "Low priority queue size"
+            default 16
+            range 4 128
+            depends on SYSTEM_SERVICE_ENABLE_PRIORITY_QUEUES
+            help
+                Size of low priority event queue.
+    
+    endmenu
+
 endmenu
