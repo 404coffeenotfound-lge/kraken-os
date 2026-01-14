@@ -29,11 +29,33 @@ static const char *TAG = "bluetooth_service";
 static system_service_id_t bt_service_id = 0;
 static system_event_type_t bt_events[8];
 static bool initialized = false;
+static bool running = false;
 static bool is_connected = false;
 static uint16_t gatts_if_handle = ESP_GATT_IF_NONE;
 static uint16_t conn_id = 0;
 static uint16_t service_handle = 0;
 static uint16_t notify_handle = 0;
+static TaskHandle_t heartbeat_task_handle = NULL;
+
+/* Heartbeat task - sends periodic heartbeats to watchdog */
+static void bt_heartbeat_task(void *arg)
+{
+    ESP_LOGI(TAG, "Heartbeat task started");
+    
+    while (running) {
+        // Send heartbeat every 10 seconds (watchdog timeout is 45s)
+        vTaskDelay(pdMS_TO_TICKS(10000));
+        
+        if (running) {
+            system_service_heartbeat(bt_service_id);
+            ESP_LOGI(TAG, "Heartbeat sent (service_id=%d)", bt_service_id);
+        }
+    }
+    
+    ESP_LOGI(TAG, "Heartbeat task exiting");
+    heartbeat_task_handle = NULL;
+    vTaskDelete(NULL);
+}
 
 // Advertising configuration flags
 static uint8_t adv_config_done = 0;
@@ -371,13 +393,13 @@ esp_err_t bluetooth_service_init(void)
     
     // Register with watchdog
     service_watchdog_config_t watchdog_config = {
-        .timeout_ms = 45000,              // 45 second timeout (BT operations can be slow)
+        .timeout_ms = 45000,              // 45 second timeout (BT init is slow)
         .auto_restart = true,             // Auto-restart on failure
         .max_restart_attempts = 2,        // Max 2 restart attempts
-        .is_critical = false              // Not a critical service
+        .is_critical = true               // CRITICAL: Bluetooth is essential
     };
     watchdog_register_service(bt_service_id, &watchdog_config);
-    ESP_LOGI(TAG, "✓ Registered with watchdog (45s timeout)");
+    ESP_LOGI(TAG, "✓ Registered with watchdog (45s timeout, CRITICAL)");
     
     // Set resource quotas
     service_quota_t quota = {
@@ -513,6 +535,26 @@ esp_err_t bluetooth_service_start(void)
     
     system_service_set_state(bt_service_id, SYSTEM_SERVICE_STATE_RUNNING);
     
+    // Send immediate heartbeat to reset watchdog timer
+    system_service_heartbeat(bt_service_id);
+    
+    // Start heartbeat task
+    running = true;
+    BaseType_t task_ret = xTaskCreate(
+        bt_heartbeat_task,
+        "bt_heartbeat",
+        4096,  // Increased stack size to prevent overflow
+        NULL,
+        3,
+        &heartbeat_task_handle
+    );
+    
+    if (task_ret != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create heartbeat task");
+        running = false;
+        return ESP_FAIL;
+    }
+    
     // Post started event
     system_event_post(bt_service_id,
                      bt_events[BT_EVENT_STARTED],
@@ -536,6 +578,12 @@ esp_err_t bluetooth_service_stop(void)
     }
     
     ESP_LOGI(TAG, "Stopping bluetooth service...");
+    
+    // Stop heartbeat task
+    running = false;
+    if (heartbeat_task_handle != NULL) {
+        vTaskDelay(pdMS_TO_TICKS(100));  // Give task time to exit
+    }
     
     system_service_set_state(bt_service_id, SYSTEM_SERVICE_STATE_STOPPING);
     

@@ -13,8 +13,30 @@ static const char *TAG = "audio_service";
 static system_service_id_t audio_service_id = 0;
 static system_event_type_t audio_events[8];
 static bool initialized = false;
+static bool running = false;
 static uint8_t current_volume = 50;
 static bool is_muted = false;
+static TaskHandle_t heartbeat_task_handle = NULL;
+
+/* Heartbeat task - sends periodic heartbeats to watchdog */
+static void audio_heartbeat_task(void *arg)
+{
+    ESP_LOGI(TAG, "Heartbeat task started");
+    
+    while (running) {
+        // Send heartbeat every 10 seconds (watchdog timeout is 30s)
+        vTaskDelay(pdMS_TO_TICKS(10000));
+        
+        if (running) {
+            system_service_heartbeat(audio_service_id);
+            ESP_LOGI(TAG, "Heartbeat sent (service_id=%d)", audio_service_id);
+        }
+    }
+    
+    ESP_LOGI(TAG, "Heartbeat task exiting");
+    heartbeat_task_handle = NULL;
+    vTaskDelete(NULL);
+}
 
 esp_err_t audio_service_init(void)
 {
@@ -61,10 +83,10 @@ esp_err_t audio_service_init(void)
         .timeout_ms = 30000,              // 30 second timeout
         .auto_restart = true,             // Auto-restart on failure
         .max_restart_attempts = 3,        // Max 3 restart attempts
-        .is_critical = false              // Not a critical service
+        .is_critical = true               // CRITICAL: Audio is essential
     };
     watchdog_register_service(audio_service_id, &watchdog_config);
-    ESP_LOGI(TAG, "✓ Registered with watchdog (30s timeout)");
+    ESP_LOGI(TAG, "✓ Registered with watchdog (30s timeout, CRITICAL)");
     
     // Set resource quotas
     service_quota_t quota = {
@@ -119,6 +141,28 @@ esp_err_t audio_service_start(void)
     
     system_service_set_state(audio_service_id, SYSTEM_SERVICE_STATE_RUNNING);
     
+    // Send immediate heartbeat to reset watchdog timer
+    system_service_heartbeat(audio_service_id);
+    
+    // Start heartbeat task
+    running = true;
+    BaseType_t task_ret = xTaskCreate(
+        audio_heartbeat_task,
+        "audio_heartbeat",
+        4096,  // Increased stack size to prevent overflow
+        NULL,
+        3,
+        &heartbeat_task_handle
+    );
+    
+    if (task_ret != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create heartbeat task");
+        running = false;
+        return ESP_FAIL;
+    }
+    
+    ESP_LOGI(TAG, "✓ Heartbeat task created successfully");
+    
     // Post started event
     system_event_post(audio_service_id,
                      audio_events[AUDIO_EVENT_STARTED],
@@ -141,6 +185,12 @@ esp_err_t audio_service_stop(void)
     }
     
     ESP_LOGI(TAG, "Stopping audio service...");
+    
+    // Stop heartbeat task
+    running = false;
+    if (heartbeat_task_handle != NULL) {
+        vTaskDelay(pdMS_TO_TICKS(100));  // Give task time to exit
+    }
     
     system_service_set_state(audio_service_id, SYSTEM_SERVICE_STATE_STOPPING);
     

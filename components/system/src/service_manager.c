@@ -1,5 +1,6 @@
 #include "system_service/service_manager.h"
 #include "system_internal.h"
+#include "service_watchdog.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include <string.h>
@@ -194,9 +195,13 @@ esp_err_t system_service_heartbeat(system_service_id_t service_id)
         return ESP_ERR_NOT_FOUND;
     }
     
-    ctx->services[service_id].last_heartbeat = (uint32_t)(esp_timer_get_time() / 1000);
+    uint32_t timestamp = (uint32_t)(esp_timer_get_time() / 1000);
+    ctx->services[service_id].last_heartbeat = timestamp;
     
     system_unlock();
+    
+    // Update watchdog timestamp
+    watchdog_update_heartbeat(service_id, timestamp);
     
     return ESP_OK;
 }
