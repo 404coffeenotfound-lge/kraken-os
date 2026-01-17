@@ -7,5 +7,5 @@ idf_component_register(
         "include"
         "ui"
     REQUIRES
-        system lvgl esp_lcd esp_lvgl_port driver
+        system lvgl esp_lcd esp_lvgl_port driver espressif__esp_lcd_ili9341 espressif__esp_lcd_touch_ft5x06
 )

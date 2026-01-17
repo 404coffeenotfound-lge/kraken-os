@@ -1,6 +1,8 @@
 dependencies:
   lvgl/lvgl:
-    version: "^9.4.0"
+    version: ^9.4.0
 
   espressif/esp_lvgl_port:
-    version: "^2.6.2"
+    version: ^2.6.2
+  espressif/esp_lcd_ili9341: '*'
+  espressif/esp_lcd_touch_ft5x06: '*'

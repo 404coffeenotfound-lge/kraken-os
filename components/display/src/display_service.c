@@ -1,9 +1,13 @@
 #include "esp_log.h"
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
+#include "driver/i2c.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_vendor.h"
+#include "esp_lcd_ili9341.h"
+#include "esp_lcd_touch.h"
+#include "esp_lcd_touch_ft5x06.h"
 #include "esp_lvgl_port.h"
 
 #include "display_service.h"
@@ -26,17 +30,27 @@ static display_orientation_t current_orientation = DISPLAY_ORIENTATION_0;
 static esp_lcd_panel_io_handle_t io_handle = NULL;
 static esp_lcd_panel_handle_t panel_handle = NULL;
 static lv_display_t *lvgl_disp = NULL;
+// Touch handles
+static esp_lcd_panel_io_handle_t touch_io_handle = NULL;
+static esp_lcd_touch_handle_t touch_handle = NULL;
 
 // Display configuration structure
 typedef struct {
     spi_host_device_t host;
     int dma_channel;
     int pin_mosi;
+    int pin_miso;
     int pin_sclk;
     int pin_cs;
     int pin_dc;
     int pin_rst;
     int pin_bl;
+    // Touch I2C pins
+    i2c_port_t i2c_port;
+    int pin_touch_sda;
+    int pin_touch_scl;
+    int pin_touch_int;
+    int pin_touch_rst;
     uint16_t hor_res;
     uint16_t ver_res;
 } board_display_config_t;
@@ -44,12 +58,19 @@ typedef struct {
 static const board_display_config_t s_display_config = {
     .host = SPI2_HOST,
     .dma_channel = SPI_DMA_CH_AUTO,
-    .pin_mosi = 17,
-    .pin_sclk = 18,
-    .pin_cs = 14,
-    .pin_dc = 15,
-    .pin_rst = 16,
-    .pin_bl = 13,
+    .pin_mosi = 11,      // IO11 - LCD SPI MOSI
+    .pin_miso = 13,      // IO13 - LCD SPI MISO  
+    .pin_sclk = 12,      // IO12 - LCD SPI Clock
+    .pin_cs = 10,        // IO10 - LCD Chip Select (active low)
+    .pin_dc = 46,        // IO46 - LCD Data/Command select
+    .pin_rst = -1,       // RST - Shared with ESP32-S3 reset (hardware controlled)
+    .pin_bl = 45,        // IO45 - LCD Backlight control
+    // Touch I2C configuration
+    .i2c_port = I2C_NUM_0,
+    .pin_touch_sda = 16, // IO16 - Touch I2C SDA
+    .pin_touch_scl = 15, // IO15 - Touch I2C SCL
+    .pin_touch_int = 17, // IO17 - Touch interrupt (active low)
+    .pin_touch_rst = 18, // IO18 - Touch reset (active low)
     .hor_res = 240,
     .ver_res = 320,
 };
@@ -141,6 +162,79 @@ static esp_err_t init_ui(void)
     return ESP_FAIL;
 }
 
+/* Configure touch controller */
+static esp_err_t config_touch_controller(void)
+{
+    esp_err_t ret;
+    
+    ESP_LOGI(TAG, "Configuring touch controller...");
+    
+    // 1. Initialize I2C bus
+    const i2c_config_t i2c_conf = {
+        .mode = I2C_MODE_MASTER,
+        .sda_io_num = s_display_config.pin_touch_sda,
+        .scl_io_num = s_display_config.pin_touch_scl,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .master.clk_speed = 400000,  // 400kHz
+    };
+    
+    ret = i2c_param_config(s_display_config.i2c_port, &i2c_conf);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to configure I2C: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    ret = i2c_driver_install(s_display_config.i2c_port, I2C_MODE_MASTER, 0, 0, 0);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to install I2C driver: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    ESP_LOGI(TAG, "✓ I2C bus initialized (SDA=%d, SCL=%d)", 
+             s_display_config.pin_touch_sda, s_display_config.pin_touch_scl);
+    
+    // 2. Configure FT6336G touch controller
+    const esp_lcd_touch_config_t touch_cfg = {
+        .x_max = s_display_config.hor_res,
+        .y_max = s_display_config.ver_res,
+        .rst_gpio_num = s_display_config.pin_touch_rst,
+        .int_gpio_num = s_display_config.pin_touch_int,
+        .levels = {
+            .reset = 0,      // Active low reset
+            .interrupt = 0,  // Active low interrupt
+        },
+        .flags = {
+            .swap_xy = 0,
+            .mirror_x = 0,
+            .mirror_y = 0,
+        },
+    };
+    
+    const esp_lcd_panel_io_i2c_config_t tp_io_config = ESP_LCD_TOUCH_IO_I2C_FT5x06_CONFIG();
+    
+    ret = esp_lcd_new_panel_io_i2c((esp_lcd_i2c_bus_handle_t)s_display_config.i2c_port, 
+                                    &tp_io_config, 
+                                    &touch_io_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create touch panel I/O: %s", esp_err_to_name(ret));
+        i2c_driver_delete(s_display_config.i2c_port);
+        return ret;
+    }
+    
+    ret = esp_lcd_touch_new_i2c_ft5x06(touch_io_handle, &touch_cfg, &touch_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create FT6336G touch: %s", esp_err_to_name(ret));
+        i2c_driver_delete(s_display_config.i2c_port);
+        return ret;
+    }
+    
+    ESP_LOGI(TAG, "✓ FT6336G touch controller initialized");
+    ESP_LOGI(TAG, "  Touch resolution: %dx%d", s_display_config.hor_res, s_display_config.ver_res);
+    ESP_LOGI(TAG, "  INT pin: %d, RST pin: %d", 
+             s_display_config.pin_touch_int, s_display_config.pin_touch_rst);
+    
+    return ESP_OK;
+}
 static esp_err_t config_lcd_display(void)
 {
     esp_err_t ret;
@@ -151,7 +245,7 @@ static esp_err_t config_lcd_display(void)
     const spi_bus_config_t bus_config = {
         .sclk_io_num = s_display_config.pin_sclk,
         .mosi_io_num = s_display_config.pin_mosi,
-        .miso_io_num = -1,
+        .miso_io_num = s_display_config.pin_miso,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
         .max_transfer_sz = s_display_config.hor_res * 80 * sizeof(uint16_t),
@@ -183,21 +277,21 @@ static esp_err_t config_lcd_display(void)
     }
     ESP_LOGI(TAG, "✓ LCD panel I/O created");
 
-    // 3. Configure ST7789 panel
+    // 3. Configure ILI9341 panel (basic config without vendor override)
     const esp_lcd_panel_dev_config_t panel_config = {
         .reset_gpio_num = s_display_config.pin_rst,
         .color_space = ESP_LCD_COLOR_SPACE_RGB,
         .bits_per_pixel = 16,
     };
     
-    ret = esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle);
+    ret = esp_lcd_new_panel_ili9341(io_handle, &panel_config, &panel_handle);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to create ST7789 panel: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to create ILI9341 panel: %s", esp_err_to_name(ret));
         esp_lcd_panel_io_del(io_handle);
         spi_bus_free(s_display_config.host);
         return ret;
     }
-    ESP_LOGI(TAG, "✓ ST7789 panel created");
+    ESP_LOGI(TAG, "✓ ILI9341 panel created");
 
     // 4. Reset and initialize panel
     ret = esp_lcd_panel_reset(panel_handle);
@@ -213,13 +307,19 @@ static esp_err_t config_lcd_display(void)
     }
     ESP_LOGI(TAG, "✓ Panel reset and initialized");
 
-    // 5. Set display orientation (portrait)
+    // 5. Set panel mirroring - no swap, no mirror initially
     ret = esp_lcd_panel_swap_xy(panel_handle, false);
-    if (ret != ESP_OK) goto cleanup;
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to set swap_xy: %s", esp_err_to_name(ret));
+    }
     
     ret = esp_lcd_panel_mirror(panel_handle, false, false);
-    if (ret != ESP_OK) goto cleanup;
-    
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to set mirror: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "✓ Panel orientation configured");
+    }
+
     // 6. Turn on display
     ret = esp_lcd_panel_disp_on_off(panel_handle, true);
     if (ret != ESP_OK) {
@@ -264,6 +364,11 @@ static esp_err_t config_lcd_display(void)
         .vres = s_display_config.ver_res,
         .monochrome = false,
         .color_format = LV_COLOR_FORMAT_RGB565,
+        .rotation = {
+            .mirror_x = 1,  // Enable X mirroring at LVGL level
+            .mirror_y = 0,
+            .swap_xy = 0,
+        },
         .flags = {
             .swap_bytes = 1,
         },
@@ -276,6 +381,25 @@ static esp_err_t config_lcd_display(void)
         goto cleanup;
     }
     ESP_LOGI(TAG, "✓ LVGL display created (%dx%d)", s_display_config.hor_res, s_display_config.ver_res);
+    
+    // 10. Initialize touch controller
+    ret = config_touch_controller();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Touch controller initialization failed, continuing without touch");
+        // Don't fail - display can work without touch
+    } else {
+        // Register touch input with LVGL
+        const lvgl_port_touch_cfg_t touch_cfg = {
+            .disp = lvgl_disp,
+            .handle = touch_handle,
+        };
+        
+        if (lvgl_port_add_touch(&touch_cfg) == NULL) {
+            ESP_LOGW(TAG, "Failed to add touch to LVGL");
+        } else {
+            ESP_LOGI(TAG, "✓ Touch input registered with LVGL");
+        }
+    }
     
     // Set display as default
     if (lvgl_port_lock(pdMS_TO_TICKS(1000))) {
@@ -576,7 +700,7 @@ esp_err_t display_set_orientation(display_orientation_t orientation)
         case DISPLAY_ORIENTATION_0:
             ret = esp_lcd_panel_swap_xy(panel_handle, false);
             if (ret == ESP_OK) {
-                ret = esp_lcd_panel_mirror(panel_handle, false, false);
+                ret = esp_lcd_panel_mirror(panel_handle, true, true);
             }
             break;
             
