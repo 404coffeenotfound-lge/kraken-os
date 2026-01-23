@@ -526,12 +526,9 @@ esp_err_t bluetooth_service_start(void)
     
     ESP_LOGI(TAG, "Starting bluetooth service...");
     
-    // Register GATT application
-    esp_err_t ret = esp_ble_gatts_app_register(0);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to register GATT app: %s", esp_err_to_name(ret));
-        return ret;
-    }
+    // Do NOT automatically register GATT app or start advertising
+    // Services and apps can manually start advertising when needed
+    // by calling bluetooth_service_start_advertising()
     
     system_service_set_state(bt_service_id, SYSTEM_SERVICE_STATE_RUNNING);
     
@@ -564,9 +561,10 @@ esp_err_t bluetooth_service_start(void)
     // Send heartbeat to watchdog
     system_service_heartbeat(bt_service_id);
     
-    ESP_LOGI(TAG, "✓ Bluetooth service started");
+    ESP_LOGI(TAG, "✓ Bluetooth service started (advertising disabled)");
     ESP_LOGI(TAG, "  → Posted BT_EVENT_STARTED");
-    ESP_LOGI(TAG, "  Waiting for GATT registration...");
+    ESP_LOGI(TAG, "  Note: BLE advertising is NOT active");
+    ESP_LOGI(TAG, "  Call bluetooth_service_start_advertising() to enable");
     
     return ESP_OK;
 }
@@ -627,5 +625,46 @@ esp_err_t bluetooth_service_send_notification(const uint8_t *data, uint16_t len)
     }
     
     ESP_LOGI(TAG, "✓ Sent notification to client (%d bytes)", len);
+    return ESP_OK;
+}
+
+esp_err_t bluetooth_service_start_advertising(void)
+{
+    if (!initialized) {
+        ESP_LOGI(TAG, "Bluetooth service not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    ESP_LOGI(TAG, "Starting BLE advertising...");
+    
+    // Register GATT application (this will trigger advertising setup)
+    esp_err_t ret = esp_ble_gatts_app_register(0);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register GATT app: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    ESP_LOGI(TAG, "✓ GATT app registration initiated");
+    ESP_LOGI(TAG, "  Advertising will start automatically");
+    
+    return ESP_OK;
+}
+
+esp_err_t bluetooth_service_stop_advertising(void)
+{
+    if (!initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    ESP_LOGI(TAG, "Stopping BLE advertising...");
+    
+    esp_err_t ret = esp_ble_gap_stop_advertising();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to stop advertising: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    ESP_LOGI(TAG, "✓ BLE advertising stopped");
+    
     return ESP_OK;
 }

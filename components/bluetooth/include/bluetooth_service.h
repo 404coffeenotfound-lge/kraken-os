@@ -46,6 +46,10 @@ esp_err_t bluetooth_service_stop(void);
 system_service_id_t bluetooth_service_get_id(void);
 bool bluetooth_service_is_connected(void);
 
+// Advertising control
+esp_err_t bluetooth_service_start_advertising(void);
+esp_err_t bluetooth_service_stop_advertising(void);
+
 // Data transfer
 esp_err_t bluetooth_service_send_notification(const uint8_t *data, uint16_t len);
 

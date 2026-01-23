@@ -20,8 +20,8 @@ static ui_topbar_config_t current_config;
 
 // Default configuration
 static ui_topbar_config_t default_config = {
-    .height = 40,
-    .separator_height = 2,
+    .height = 28,
+    .separator_height = 1,
 };
 
 lv_obj_t* ui_topbar_create(lv_obj_t *parent, const ui_topbar_config_t *config) {
@@ -53,41 +53,41 @@ lv_obj_t* ui_topbar_create(lv_obj_t *parent, const ui_topbar_config_t *config) {
     clock_label = lv_label_create(topbar_container);
     lv_label_set_text(clock_label, "00:00");
     lv_obj_set_style_text_color(clock_label, current_config.text_color, 0);
-    lv_obj_set_style_text_font(clock_label, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(clock_label, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_opa(clock_label, LV_OPA_COVER, 0); // Disable anti-aliasing
-    lv_obj_align(clock_label, LV_ALIGN_LEFT_MID, 10, 0);
+    lv_obj_align(clock_label, LV_ALIGN_LEFT_MID, 8, 0);
 
     // Create status icons container (top-right)
     lv_obj_t *icons_container = lv_obj_create(topbar_container);
-    lv_obj_set_size(icons_container, 120, current_config.height);
-    lv_obj_align(icons_container, LV_ALIGN_RIGHT_MID, -5, 0);
+    lv_obj_set_size(icons_container, 90, current_config.height);
+    lv_obj_align(icons_container, LV_ALIGN_RIGHT_MID, -4, 0);
     lv_obj_clear_flag(icons_container, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_opa(icons_container, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(icons_container, 0, 0);
     lv_obj_set_style_pad_all(icons_container, 0, 0);
     lv_obj_set_flex_flow(icons_container, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(icons_container, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(icons_container, 8, 0);
+    lv_obj_set_style_pad_column(icons_container, 6, 0);
 
     // WiFi icon
     wifi_icon = lv_label_create(icons_container);
     lv_label_set_text(wifi_icon, LV_SYMBOL_WIFI);
     lv_obj_set_style_text_color(wifi_icon, lv_color_hex(0x808080), 0); // Gray (disconnected)
-    lv_obj_set_style_text_font(wifi_icon, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(wifi_icon, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_opa(wifi_icon, LV_OPA_COVER, 0); // Disable anti-aliasing
 
     // Bluetooth icon
     bluetooth_icon = lv_label_create(icons_container);
     lv_label_set_text(bluetooth_icon, LV_SYMBOL_BLUETOOTH);
     lv_obj_set_style_text_color(bluetooth_icon, lv_color_hex(0x808080), 0); // Gray (disconnected)
-    lv_obj_set_style_text_font(bluetooth_icon, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(bluetooth_icon, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_opa(bluetooth_icon, LV_OPA_COVER, 0); // Disable anti-aliasing
 
     // Battery icon
     battery_icon = lv_label_create(icons_container);
     lv_label_set_text(battery_icon, LV_SYMBOL_BATTERY_FULL);
     lv_obj_set_style_text_color(battery_icon, current_config.text_color, 0);
-    lv_obj_set_style_text_font(battery_icon, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(battery_icon, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_opa(battery_icon, LV_OPA_COVER, 0); // Disable anti-aliasing
 
     // Create separator line

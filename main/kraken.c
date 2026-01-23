@@ -38,6 +38,7 @@
 #include "display_service.h"
 #include "network_service.h"
 #include "input_service.h"
+#include "power_service.h"
 
 // App manager and dynamic loader
 #include "system_service/app_manager.h"
@@ -235,31 +236,37 @@ static void init_application_services(void)
     }
 
     // Initialize Input Service
-    ret = input_service_init();
+    // ret = input_service_init();
+    // if (ret == ESP_OK) {
+    //     input_service_start();
+    // }
+    
+    // Initialize Power Service
+    ret = power_service_init();
     if (ret == ESP_OK) {
-        input_service_start();
+        power_service_start();
     }
     
-    ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "Registering apps...");
-    ESP_LOGI(TAG, "Using STATIC app loading (built into firmware)");
-    ESP_LOGI(TAG, "");
+    // ESP_LOGI(TAG, "");
+    // ESP_LOGI(TAG, "Registering apps...");
+    // ESP_LOGI(TAG, "Using STATIC app loading (built into firmware)");
+    // ESP_LOGI(TAG, "");
     
     // Register hello app
-    ret = app_manager_register_app(&hello_app_manifest, NULL);
-    if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "✓ Registered 'hello' app");
-    } else {
-        ESP_LOGE(TAG, "✗ Failed to register 'hello' app: %s", esp_err_to_name(ret));
-    }
+    // ret = app_manager_register_app(&hello_app_manifest, NULL);
+    // if (ret == ESP_OK) {
+    //     ESP_LOGI(TAG, "✓ Registered 'hello' app");
+    // } else {
+    //     ESP_LOGE(TAG, "✗ Failed to register 'hello' app: %s", esp_err_to_name(ret));
+    // }
     
     // Register goodbye app
-    ret = app_manager_register_app(&goodbye_app_manifest, NULL);
-    if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "✓ Registered 'goodbye' app");
-    } else {
-        ESP_LOGE(TAG, "✗ Failed to register 'goodbye' app: %s", esp_err_to_name(ret));
-    }
+    // ret = app_manager_register_app(&goodbye_app_manifest, NULL);
+    // if (ret == ESP_OK) {
+    //     ESP_LOGI(TAG, "✓ Registered 'goodbye' app");
+    // } else {
+    //     ESP_LOGE(TAG, "✗ Failed to register 'goodbye' app: %s", esp_err_to_name(ret));
+    // }
     
     ESP_LOGI(TAG, "");
     ESP_LOGI(TAG, "✓ Application services initialized");

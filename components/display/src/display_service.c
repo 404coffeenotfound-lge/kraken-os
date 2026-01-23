@@ -16,6 +16,8 @@
 #include "system_service/event_bus.h"
 #include "ui_topbar.h"
 #include "ui_mainmenu.h"
+#include "ui_button.h"
+#include "ui_styles.h"
 
 static const char *TAG = "display_service";
 
@@ -26,6 +28,14 @@ static uint8_t current_brightness = 80;
 static bool screen_on_state = true;
 static display_orientation_t current_orientation = DISPLAY_ORIENTATION_0;
 
+// Menu event types
+static system_event_type_t menu_audio_event = SYSTEM_EVENT_TYPE_INVALID;
+static system_event_type_t menu_network_event = SYSTEM_EVENT_TYPE_INVALID;
+static system_event_type_t menu_bluetooth_event = SYSTEM_EVENT_TYPE_INVALID;
+static system_event_type_t menu_display_event = SYSTEM_EVENT_TYPE_INVALID;
+static system_event_type_t menu_apps_event = SYSTEM_EVENT_TYPE_INVALID;
+static system_event_type_t menu_back_event = SYSTEM_EVENT_TYPE_INVALID;
+
 // LCD handles
 static esp_lcd_panel_io_handle_t io_handle = NULL;
 static esp_lcd_panel_handle_t panel_handle = NULL;
@@ -33,6 +43,70 @@ static lv_display_t *lvgl_disp = NULL;
 // Touch handles
 static esp_lcd_panel_io_handle_t touch_io_handle = NULL;
 static esp_lcd_touch_handle_t touch_handle = NULL;
+
+// Navigation stack for screen management
+#define NAV_STACK_MAX 5
+static lv_obj_t *main_screen = NULL;
+static lv_obj_t *nav_stack[NAV_STACK_MAX] = {NULL};
+static int nav_stack_top = -1;
+
+// Helper to get current content
+static lv_obj_t* get_current_content(void) {
+    if (nav_stack_top >= 0 && nav_stack_top < NAV_STACK_MAX) {
+        return nav_stack[nav_stack_top];
+    }
+    return NULL;
+}
+
+// Push new content to navigation stack
+static esp_err_t nav_push(lv_obj_t *content) {
+    if (content == NULL) return ESP_ERR_INVALID_ARG;
+    if (nav_stack_top >= NAV_STACK_MAX - 1) {
+        ESP_LOGE(TAG, "Navigation stack full");
+        return ESP_ERR_NO_MEM;
+    }
+    
+    // Hide current content if exists
+    lv_obj_t *current = get_current_content();
+    if (current && lv_obj_is_valid(current)) {
+        lv_obj_add_flag(current, LV_OBJ_FLAG_HIDDEN);
+    }
+    
+    // Push new content
+    nav_stack_top++;
+    nav_stack[nav_stack_top] = content;
+    lv_obj_clear_flag(content, LV_OBJ_FLAG_HIDDEN);
+    
+    ESP_LOGI(TAG, "Pushed screen to nav stack (level %d)", nav_stack_top);
+    return ESP_OK;
+}
+
+// Pop content from navigation stack
+static esp_err_t nav_pop(void) {
+    if (nav_stack_top < 0) {
+        ESP_LOGW(TAG, "Navigation stack empty");
+        return ESP_ERR_NOT_FOUND;
+    }
+    
+    // Delete current content
+    lv_obj_t *current = nav_stack[nav_stack_top];
+    if (current && lv_obj_is_valid(current)) {
+        lv_obj_del(current);
+    }
+    nav_stack[nav_stack_top] = NULL;
+    nav_stack_top--;
+    
+    // Show previous content
+    lv_obj_t *previous = get_current_content();
+    if (previous && lv_obj_is_valid(previous)) {
+        lv_obj_clear_flag(previous, LV_OBJ_FLAG_HIDDEN);
+        ESP_LOGI(TAG, "Popped to nav stack level %d", nav_stack_top);
+    } else if (nav_stack_top < 0) {
+        ESP_LOGI(TAG, "Navigation stack now empty");
+    }
+    
+    return ESP_OK;
+}
 
 // Display configuration structure
 typedef struct {
@@ -79,31 +153,41 @@ static const board_display_config_t s_display_config = {
 static void menu_audio_clicked(void)
 {
     ESP_LOGI(TAG, "Audio menu clicked");
-    // TODO: Navigate to audio settings
+    if (menu_audio_event != SYSTEM_EVENT_TYPE_INVALID) {
+        system_event_post(display_service_id, menu_audio_event, NULL, 0, SYSTEM_EVENT_PRIORITY_NORMAL);
+    }
 }
 
 static void menu_network_clicked(void)
 {
     ESP_LOGI(TAG, "Network menu clicked");
-    // TODO: Navigate to network settings
+    if (menu_network_event != SYSTEM_EVENT_TYPE_INVALID) {
+        system_event_post(display_service_id, menu_network_event, NULL, 0, SYSTEM_EVENT_PRIORITY_NORMAL);
+    }
 }
 
 static void menu_bluetooth_clicked(void)
 {
     ESP_LOGI(TAG, "Bluetooth menu clicked");
-    // TODO: Navigate to bluetooth settings
+    if (menu_bluetooth_event != SYSTEM_EVENT_TYPE_INVALID) {
+        system_event_post(display_service_id, menu_bluetooth_event, NULL, 0, SYSTEM_EVENT_PRIORITY_NORMAL);
+    }
 }
 
 static void menu_display_clicked(void)
 {
     ESP_LOGI(TAG, "Display menu clicked");
-    // TODO: Navigate to display settings
+    if (menu_display_event != SYSTEM_EVENT_TYPE_INVALID) {
+        system_event_post(display_service_id, menu_display_event, NULL, 0, SYSTEM_EVENT_PRIORITY_NORMAL);
+    }
 }
 
 static void menu_apps_clicked(void)
 {
     ESP_LOGI(TAG, "Apps menu clicked");
-    // TODO: Navigate to apps list
+    if (menu_apps_event != SYSTEM_EVENT_TYPE_INVALID) {
+        system_event_post(display_service_id, menu_apps_event, NULL, 0, SYSTEM_EVENT_PRIORITY_NORMAL);
+    }
 }
 
 static esp_err_t init_ui(void)
@@ -112,13 +196,13 @@ static esp_err_t init_ui(void)
     
     // Lock LVGL mutex
     if (lvgl_port_lock(0)) {
-        lv_obj_t *screen = lv_scr_act();
+        main_screen = lv_scr_act();
         
         // Set screen background to black
-        lv_obj_set_style_bg_color(screen, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_color(main_screen, lv_color_hex(0x000000), 0);
         
         // Create top bar with NULL config (use defaults)
-        lv_obj_t *topbar = ui_topbar_create(screen, NULL);
+        lv_obj_t *topbar = ui_topbar_create(main_screen, NULL);
         if (topbar == NULL) {
             ESP_LOGE(TAG, "Failed to create top bar");
             lvgl_port_unlock();
@@ -142,13 +226,16 @@ static esp_err_t init_ui(void)
         
         // Create main menu
         uint16_t topbar_height = ui_topbar_get_height();
-        lv_obj_t *menu = ui_mainmenu_create(screen, topbar_height, menu_items, 
+        lv_obj_t *main_menu = ui_mainmenu_create(main_screen, topbar_height, menu_items, 
                                             sizeof(menu_items) / sizeof(menu_items[0]), NULL);
-        if (menu == NULL) {
+        if (main_menu == NULL) {
             ESP_LOGE(TAG, "Failed to create main menu");
             lvgl_port_unlock();
             return ESP_FAIL;
         }
+        
+        // Push main menu to navigation stack as first screen
+        nav_push(main_menu);
         
         ESP_LOGI(TAG, "✓ UI created successfully");
         
@@ -307,17 +394,17 @@ static esp_err_t config_lcd_display(void)
     }
     ESP_LOGI(TAG, "✓ Panel reset and initialized");
 
-    // 5. Set panel mirroring - no swap, no mirror initially
-    ret = esp_lcd_panel_swap_xy(panel_handle, false);
+    // 5. Set panel orientation for vertical mode
+    ret = esp_lcd_panel_swap_xy(panel_handle, false);  // No swap for portrait
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "Failed to set swap_xy: %s", esp_err_to_name(ret));
     }
     
-    ret = esp_lcd_panel_mirror(panel_handle, false, false);
+    ret = esp_lcd_panel_mirror(panel_handle, true, false);  // Mirror X to fix horizontal mirroring
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "Failed to set mirror: %s", esp_err_to_name(ret));
     } else {
-        ESP_LOGI(TAG, "✓ Panel orientation configured");
+        ESP_LOGI(TAG, "✓ Panel orientation configured (vertical mode)");
     }
 
     // 6. Turn on display
@@ -354,11 +441,11 @@ static esp_err_t config_lcd_display(void)
     }
     ESP_LOGI(TAG, "✓ LVGL port initialized");
 
-    // 9. Create LVGL display
+    // 9. Create LVGL display with reduced buffer size for SRAM savings
     const lvgl_port_display_cfg_t disp_cfg = {
         .io_handle = io_handle,
         .panel_handle = panel_handle,
-        .buffer_size = s_display_config.hor_res * 50,
+        .buffer_size = s_display_config.hor_res * 20,  // Reduced from 50 to 20 lines
         .double_buffer = true,
         .hres = s_display_config.hor_res,
         .vres = s_display_config.ver_res,
@@ -371,6 +458,8 @@ static esp_err_t config_lcd_display(void)
         },
         .flags = {
             .swap_bytes = 1,
+            .buff_dma = 0,  // Don't use DMA buffers (saves SRAM)
+            .buff_spiram = 1,  // Use SPIRAM for buffers
         },
     };
 
@@ -423,6 +512,34 @@ cleanup:
     return ret;
 } 
 
+/* Callback for back button click */
+static void back_button_clicked(void)
+{
+    ESP_LOGI(TAG, "Back button clicked");
+    if (menu_back_event != SYSTEM_EVENT_TYPE_INVALID) {
+        system_event_post(display_service_id, menu_back_event, NULL, 0, SYSTEM_EVENT_PRIORITY_NORMAL);
+    }
+}
+
+
+/* Event handler for back button */
+static void display_back_event_handler(const system_event_t *event, void *user_data)
+{
+    if (event->event_type == menu_back_event) {
+        ESP_LOGI(TAG, "Back button clicked - returning to previous screen");
+        
+        if (!lvgl_port_lock(0)) {
+            ESP_LOGE(TAG, "Failed to lock LVGL mutex");
+            return;
+        }
+        
+        // Simply pop the current screen to return to previous
+        nav_pop();
+        
+        lvgl_port_unlock();
+    }
+}
+
 esp_err_t display_service_init(void)
 {
     if (initialized) {
@@ -464,6 +581,23 @@ esp_err_t display_service_init(void)
     }
     
     ESP_LOGI(TAG, "✓ Registered %d event types", 8);
+    
+    // Register menu event types
+    system_event_register_type("menu.audio_clicked", &menu_audio_event);
+    system_event_register_type("menu.network_clicked", &menu_network_event);
+    system_event_register_type("menu.bluetooth_clicked", &menu_bluetooth_event);
+    system_event_register_type("menu.display_clicked", &menu_display_event);
+    system_event_register_type("menu.apps_clicked", &menu_apps_event);
+    system_event_register_type("menu.back_clicked", &menu_back_event);
+    ESP_LOGI(TAG, "✓ Registered menu event types");
+    
+    // Subscribe to menu events
+    ret = system_event_subscribe(display_service_id, menu_back_event, display_back_event_handler, NULL);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "✓ Subscribed to menu.back_clicked event");
+    }
+    
+    // Note: network_service handles its own UI, so we don't subscribe to network clicks here
     
     // Initialize LCD hardware
     ret = config_lcd_display();
@@ -754,4 +888,35 @@ esp_err_t display_set_orientation(display_orientation_t orientation)
 system_service_id_t display_service_get_id(void)
 {
     return display_service_id;
+}
+
+/* Load new screen content using navigation stack */
+esp_err_t display_service_load_screen(lv_obj_t *content)
+{
+    if (!main_screen || !content) {
+        ESP_LOGE(TAG, "Invalid parameters for load_screen");
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (!lvgl_port_lock(0)) {
+        ESP_LOGE(TAG, "Failed to lock LVGL mutex");
+        return ESP_FAIL;
+    }
+    
+    // Use navigation stack for screen management
+    esp_err_t ret = nav_push(content);
+    
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "Screen loaded via nav_push");
+    } else {
+        ESP_LOGE(TAG, "Failed to push screen");
+    }
+    
+    lvgl_port_unlock();
+    return ret;
+}
+
+lv_obj_t* display_service_get_main_screen(void)
+{
+    return main_screen;
 }

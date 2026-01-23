@@ -9,6 +9,7 @@ idf_component_register(
         display 
         network 
         input 
+        power 
         apps
         nvs_flash 
         bt 

@@ -9,7 +9,7 @@ menu "System Service Configuration"
 
     config SYSTEM_SERVICE_MAX_EVENT_TYPES
         int "Maximum number of event types"
-        default 64
+        default 128
         range 1 256
         help
             Maximum number of event types that can be registered.

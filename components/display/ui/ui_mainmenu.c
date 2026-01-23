@@ -1,18 +1,17 @@
 /**
  * @file ui_mainmenu.c
  * @brief iPhone-style main menu implementation
+ * 
+ * REDESIGNED: No static caching - always creates fresh objects
+ * Caller is responsible for object lifecycle management
  */
 
 #include "ui_mainmenu.h"
 #include <string.h>
 
-// Menu state
-static lv_obj_t *menu_container = NULL;
-static ui_mainmenu_config_t current_config;
-
-// Default configuration
+// Default configuration (no static object pointers!)
 static ui_mainmenu_config_t default_config = {
-    .item_height = 60,
+    .item_height = 45,
 };
 
 // Menu item click callback
@@ -26,39 +25,45 @@ static void menu_item_clicked(lv_event_t *e) {
 lv_obj_t* ui_mainmenu_create(lv_obj_t *parent, uint16_t topbar_height,
                              const ui_menu_item_t *items, size_t item_count,
                              const ui_mainmenu_config_t *config) {
-    if (menu_container != NULL) {
-        return menu_container; // Already created
+    
+    if (parent == NULL || items == NULL || item_count == 0) {
+        return NULL;
     }
-
-    // Use default config if none provided
+    
+    // Use provided config or defaults
+    ui_mainmenu_config_t cfg;
     if (config == NULL) {
-        default_config.bg_color = lv_color_hex(0x000000);       // Black
-        default_config.text_color = lv_color_hex(0xFFFFFF);     // White
-        default_config.selected_color = lv_color_hex(0x333333); // Dark gray
-        current_config = default_config;
+        cfg = default_config;
+        cfg.bg_color = lv_color_hex(0x000000);       // Black
+        cfg.text_color = lv_color_hex(0xFFFFFF);     // White
+        cfg.selected_color = lv_color_hex(0x333333); // Dark gray
     } else {
-        current_config = *config;
+        cfg = *config;
     }
 
-    // Create menu container
-    menu_container = lv_obj_create(parent);
-    lv_obj_set_size(menu_container, LV_HOR_RES, LV_VER_RES - topbar_height);
-    lv_obj_set_pos(menu_container, 0, topbar_height);
-    lv_obj_set_style_bg_color(menu_container, current_config.bg_color, 0);
-    lv_obj_set_style_border_width(menu_container, 0, 0);
-    lv_obj_set_style_radius(menu_container, 0, 0);
-    lv_obj_set_style_pad_all(menu_container, 0, 0);
-    lv_obj_set_scrollbar_mode(menu_container, LV_SCROLLBAR_MODE_AUTO);
+    // Always create new menu container - no caching!
+    lv_obj_t *container = lv_obj_create(parent);
+    if (container == NULL) {
+        return NULL;
+    }
+    
+    lv_obj_set_size(container, LV_HOR_RES, LV_VER_RES - topbar_height);
+    lv_obj_set_pos(container, 0, topbar_height);
+    lv_obj_set_style_bg_color(container, cfg.bg_color, 0);
+    lv_obj_set_style_border_width(container, 0, 0);
+    lv_obj_set_style_radius(container, 0, 0);
+    lv_obj_set_style_pad_all(container, 0, 0);
+    lv_obj_set_scrollbar_mode(container, LV_SCROLLBAR_MODE_AUTO);
 
     // Create menu items
     for (size_t i = 0; i < item_count; i++) {
         // Create item container
-        lv_obj_t *item = lv_obj_create(menu_container);
-        lv_obj_set_size(item, LV_HOR_RES, current_config.item_height);
-        lv_obj_set_pos(item, 0, i * current_config.item_height);
+        lv_obj_t *item = lv_obj_create(container);
+        lv_obj_set_size(item, LV_HOR_RES, cfg.item_height);
+        lv_obj_set_pos(item, 0, i * cfg.item_height);
         lv_obj_clear_flag(item, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_style_bg_color(item, current_config.bg_color, 0);
-        lv_obj_set_style_bg_color(item, current_config.selected_color, LV_STATE_PRESSED);
+        lv_obj_set_style_bg_color(item, cfg.bg_color, 0);
+        lv_obj_set_style_bg_color(item, cfg.selected_color, LV_STATE_PRESSED);
         lv_obj_set_style_border_width(item, 0, 0);
         lv_obj_set_style_radius(item, 0, 0);
         lv_obj_set_style_pad_all(item, 10, 0);
@@ -74,27 +79,24 @@ lv_obj_t* ui_mainmenu_create(lv_obj_t *parent, uint16_t topbar_height,
         if (items[i].icon != NULL) {
             lv_obj_t *icon = lv_label_create(item);
             lv_label_set_text(icon, items[i].icon);
-            lv_obj_set_style_text_color(icon, current_config.text_color, 0);
-            lv_obj_set_style_text_font(icon, &lv_font_montserrat_16, 0);
-            lv_obj_set_style_text_opa(icon, LV_OPA_COVER, 0); // Disable anti-aliasing
-            lv_obj_align(icon, LV_ALIGN_LEFT_MID, 15, 0);
+            lv_obj_set_style_text_color(icon, cfg.text_color, 0);
+            lv_obj_set_style_text_font(icon, &lv_font_montserrat_14, 0);
+            lv_obj_align(icon, LV_ALIGN_LEFT_MID, 12, 0);
         }
 
         // Create label
         lv_obj_t *label = lv_label_create(item);
         lv_label_set_text(label, items[i].label);
-        lv_obj_set_style_text_color(label, current_config.text_color, 0);
-        lv_obj_set_style_text_font(label, &lv_font_montserrat_16, 0);
-        lv_obj_set_style_text_opa(label, LV_OPA_COVER, 0); // Disable anti-aliasing
-        lv_obj_align(label, LV_ALIGN_LEFT_MID, 55, 0);
+        lv_obj_set_style_text_color(label, cfg.text_color, 0);
+        lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
+        lv_obj_align(label, LV_ALIGN_LEFT_MID, 45, 0);
 
         // Add chevron (right arrow)
         lv_obj_t *chevron = lv_label_create(item);
         lv_label_set_text(chevron, LV_SYMBOL_RIGHT);
         lv_obj_set_style_text_color(chevron, lv_color_hex(0x808080), 0);
-        lv_obj_set_style_text_font(chevron, &lv_font_montserrat_16, 0);
-        lv_obj_set_style_text_opa(chevron, LV_OPA_COVER, 0); // Disable anti-aliasing
-        lv_obj_align(chevron, LV_ALIGN_RIGHT_MID, -10, 0);
+        lv_obj_set_style_text_font(chevron, &lv_font_montserrat_12, 0);
+        lv_obj_align(chevron, LV_ALIGN_RIGHT_MID, -8, 0);
 
         // Add click event
         if (items[i].callback != NULL) {
@@ -104,24 +106,19 @@ lv_obj_t* ui_mainmenu_create(lv_obj_t *parent, uint16_t topbar_height,
         }
     }
 
-    return menu_container;
+    return container;
 }
 
+// These functions are now no-ops since we don't cache
+// Caller should use lv_obj_del() directly on the returned container
 void ui_mainmenu_destroy(void) {
-    if (menu_container != NULL) {
-        lv_obj_del(menu_container);
-        menu_container = NULL;
-    }
+    // No-op - caller manages lifecycle
 }
 
 void ui_mainmenu_show(void) {
-    if (menu_container != NULL) {
-        lv_obj_clear_flag(menu_container, LV_OBJ_FLAG_HIDDEN);
-    }
+    // No-op - caller manages visibility
 }
 
 void ui_mainmenu_hide(void) {
-    if (menu_container != NULL) {
-        lv_obj_add_flag(menu_container, LV_OBJ_FLAG_HIDDEN);
-    }
+    // No-op - caller manages visibility
 }

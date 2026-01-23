@@ -7,6 +7,7 @@
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "nvs_flash.h"
+#include "lvgl.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -236,6 +237,55 @@ static esp_err_t init_wifi(void)
     return ESP_OK;
 }
 
+/* Event handler for menu clicks */
+static lv_obj_t *s_network_ui = NULL;
+static system_event_type_t s_menu_network_event = SYSTEM_EVENT_TYPE_INVALID;
+static bool s_network_ui_pending = false;  // Flag to trigger UI creation
+
+static void network_menu_event_handler(const system_event_t *event, void *user_data)
+{
+    if (event->event_type == s_menu_network_event) {
+        ESP_LOGI(TAG, "Network menu clicked - scheduling UI load");
+        
+        // Just set a flag - don't create UI here
+        s_network_ui_pending = true;
+        
+    } else if (event->event_type == network_events[NETWORK_EVENT_SCAN_DONE]) {
+        ESP_LOGI(TAG, "WiFi scan done - updating UI");
+        
+        if (s_network_ui) {
+            extern void network_ui_update_wifi_list(lv_obj_t *ui);
+            network_ui_update_wifi_list(s_network_ui);
+        }
+    }
+}
+
+/* Timer callback to create and load network UI in LVGL context */
+static void network_ui_loader_timer_cb(lv_timer_t *timer)
+{
+    if (!s_network_ui_pending) {
+        return;
+    }
+    
+    ESP_LOGI(TAG, "Creating network UI in LVGL context");
+    
+    extern esp_err_t display_service_load_screen(lv_obj_t *content);
+    extern lv_obj_t* display_service_get_main_screen(void);
+    extern lv_obj_t* network_ui_create(lv_obj_t *parent);
+    
+    lv_obj_t *main_screen = display_service_get_main_screen();
+    if (main_screen) {
+        // Note: Don't destroy previous UI here - nav_pop() handles cleanup when user goes back
+        // Just create new UI and let the navigation stack manage lifecycle
+        s_network_ui = network_ui_create(main_screen);
+        if (s_network_ui) {
+            display_service_load_screen(s_network_ui);
+        }
+    }
+    
+    s_network_ui_pending = false;
+}
+
 esp_err_t network_service_init(void)
 {
     if (initialized) {
@@ -286,6 +336,19 @@ esp_err_t network_service_init(void)
     }
     
     ESP_LOGI(TAG, "✓ Registered %d event types", 9);
+    
+    // Subscribe to menu events (get event type registered by display service)
+    system_event_register_type("menu.network_clicked", &s_menu_network_event);
+    ret = system_event_subscribe(network_service_id, s_menu_network_event, network_menu_event_handler, NULL);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "✓ Subscribed to menu.network_clicked event");
+    }
+    
+    // Subscribe to own scan_done event to update UI
+    ret = system_event_subscribe(network_service_id, network_events[NETWORK_EVENT_SCAN_DONE], network_menu_event_handler, NULL);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "✓ Subscribed to network.scan_done event");
+    }
     
     // Initialize WiFi
     ret = init_wifi();
@@ -360,6 +423,11 @@ esp_err_t network_service_start(void)
     
     ESP_LOGI(TAG, "Starting network service...");
     
+    // Create periodic timer to check for pending UI operations
+    // This runs in LVGL task context
+    extern lv_timer_t* lv_timer_create(lv_timer_cb_t timer_xcb, uint32_t period, void *user_data);
+    lv_timer_create(network_ui_loader_timer_cb, 50, NULL);  // Check every 50ms
+    
     system_service_set_state(network_service_id, SYSTEM_SERVICE_STATE_RUNNING);
     
     // Post started event
@@ -371,7 +439,9 @@ esp_err_t network_service_start(void)
     ESP_LOGI(TAG, "✓ Network service started");
     ESP_LOGI(TAG, "  → Posted NETWORK_EVENT_STARTED");
     
-    // Automatically scan for WiFi networks on startup (async, non-blocking)
+    // Disabled: Automatically scan for WiFi networks on startup
+    // Uncomment below to enable auto-scan on boot
+    /*
     ESP_LOGI(TAG, "Starting initial WiFi scan (async)...");
     wifi_scan_config_t scan_config = {
         .ssid = NULL,
@@ -388,6 +458,7 @@ esp_err_t network_service_start(void)
         ESP_LOGW(TAG, "Failed to start WiFi scan: %s", esp_err_to_name(scan_ret));
         scan_in_progress = false;
     }
+    */
     
     return ESP_OK;
 }

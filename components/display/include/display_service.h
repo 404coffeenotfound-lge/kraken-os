@@ -3,6 +3,7 @@
 
 #include "esp_err.h"
 #include "system_service/system_types.h"
+#include "lvgl.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -53,6 +54,19 @@ esp_err_t display_screen_off(void);
 esp_err_t display_set_orientation(display_orientation_t orientation);
 
 system_service_id_t display_service_get_id(void);
+
+/**
+ * @brief Load a new screen content (destroys old content)
+ * @param content New content container to display
+ * @return ESP_OK on success
+ */
+esp_err_t display_service_load_screen(lv_obj_t *content);
+
+/**
+ * @brief Get the main LVGL screen object for creating content
+ * @return LVGL screen object or NULL
+ */
+lv_obj_t* display_service_get_main_screen(void);
 
 #ifdef __cplusplus
 }
